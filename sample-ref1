@@ -318,4 +318,16 @@ You can also add error handling and logging based on your requirements.
 Please note that this is a simplified example, and in a real-world scenario, you should consider security, error handling, and performance optimizations.
 
 **************
+Debezium, a popular Change Data Capture (CDC) platform, typically streams both the complete record (before the change) and the changed record (after the change) when it captures events from a database. This includes the "before" and "after" states of the changed data.
 
+Here's how it works:
+
+Before State (Old Record): Debezium captures the state of the record before the change occurred. This is often referred to as the "old" or "before" state.
+
+After State (New Record): Debezium captures the state of the record after the change has been applied. This is often referred to as the "new" or "after" state.
+
+These two states are included in the change event message produced by Debezium. This dual-state approach allows downstream consumers to see both the previous and current values of the data, making it valuable for a variety of use cases, such as data replication, auditing, and real-time analytics.
+
+Consumers of Debezium events can choose to work with either the "before" state, the "after" state, or both, depending on their specific requirements. This flexibility is useful for implementing different scenarios where access to the previous and current states of data is necessary.
+
+*****
