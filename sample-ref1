@@ -858,6 +858,27 @@ You can now use tools like curl or Postman to send HTTP requests to retrieve and
 
 This example demonstrates a simple setup for creating a reactive Java program that reads and writes data to a PostgreSQL database. Depending on your specific requirements, you can extend and customize this code accordingly.
 
+****************************
+
+{
+  "event_id": "1234567890",
+  "event_type": "generic_event",
+  "event_schema_version": "1.0",
+  "timestamp": "2023-07-16T14:30:00Z",
+  "source": "system",
+  "payload": {
+    // Custom event-specific data goes here
+    "user_id": "987654321",
+    "name": "John Doe",
+    "email": "johndoe@example.com"
+  },
+  "metadata": {
+    "correlation_id": "a1b2c3d4",
+    "user_id": "987654321",
+    "application": "your_app_name"
+    // Additional metadata fields as needed
+  }
+}
 
 
 
