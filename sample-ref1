@@ -884,4 +884,286 @@ This example demonstrates a simple setup for creating a reactive Java program th
 
 "Our 'API Abstraction Framework' is the cornerstone of our modernization strategy, seamlessly integrating legacy systems with agile microservices and cloud-native scalability. With CQRS and SAGA support, it simplifies cross-cutting concerns, ensures effortless scaling, and guarantees cloud-native readiness, fostering innovation while safeguarding data integrity."
 
+**************************
+To implement a circuit breaker for an HTTP client scenario using Resilience4j without relying on annotations, you can programmatically create and configure a circuit breaker instance. This approach gives you more control and flexibility over how the circuit breaker behaves, especially useful when you're dealing with HTTP client interactions directly. Below is an example of how to achieve this with Resilience4j:
+
+Add Resilience4j Dependency
+
+Ensure you have the Resilience4j dependency in your pom.xml. For an HTTP client scenario, you might also need a web client dependency if you don't have one already:
+
+xml
+Copy code
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-webflux</artifactId>
+</dependency>
+<dependency>
+    <groupId>io.github.resilience4j</groupId>
+    <artifactId>resilience4j-reactor</artifactId>
+    <version>{version}</version>
+</dependency>
+Replace {version} with the latest version of resilience4j-reactor.
+
+Configure and Create a CircuitBreaker Instance
+
+You can programmatically create a CircuitBreaker instance with specific configurations. This can be done in a configuration class or directly in the service class:
+
+java
+Copy code
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import java.time.Duration;
+
+public class CircuitBreakerConfiguration {
+
+    public CircuitBreaker createCircuitBreaker() {
+        CircuitBreakerConfig circuitBreakerConfig = CircuitBreakerConfig.custom()
+            .failureRateThreshold(50)
+            .waitDurationInOpenState(Duration.ofMillis(1000))
+            .slidingWindowSize(10)
+            .build();
+
+        return CircuitBreaker.of("myCircuitBreaker", circuitBreakerConfig);
+    }
+}
+Use CircuitBreaker with WebClient
+
+Assuming you're using Spring's WebClient for making HTTP calls, you can integrate the circuit breaker like so:
+
+java
+Copy code
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+
+public class MyService {
+
+    private final WebClient webClient;
+    private final CircuitBreaker circuitBreaker;
+
+    public MyService(WebClient.Builder webClientBuilder, CircuitBreaker circuitBreaker) {
+        this.webClient = webClientBuilder.baseUrl("http://example.com").build();
+        this.circuitBreaker = circuitBreaker;
+    }
+
+    public Mono<String> callExternalService() {
+        return webClient.get()
+                .uri("/resource")
+                .retrieve()
+                .bodyToMono(String.class)
+                .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
+                .onErrorResume(throwable -> Mono.just("Fallback response"));
+    }
+}
+In this example, CircuitBreakerOperator.of(circuitBreaker) is used to integrate the circuit breaker with the reactive stream that WebClient produces. The onErrorResume method provides a simple way to specify a fallback mechanism directly in the stream processing flow.
+
+This setup enables you to incorporate a circuit breaker into your HTTP client calls, adding resilience to your application by handling failures and preventing them from cascading. Remember, this is a foundational example to get you started, and you might need to adjust configurations and handling mechanisms based on your specific use case and requirements.
+
+
+
+
+
+Creating an API test automation framework using Cucumber involves several steps, including setting up your project, writing Gherkin feature files, and implementing step definitions in Java. Below is a simplified example that demonstrates how to test a RESTful API using Cucumber and Gherkin.
+
+Step 1: Set Up Your Project
+First, set up a Maven project and add the following dependencies to your pom.xml file:
+
+xml
+Copy code
+<dependencies>
+    <!-- Cucumber Dependencies -->
+    <dependency>
+        <groupId>io.cucumber</groupId>
+        <artifactId>cucumber-java</artifactId>
+        <version>7.2.3</version>
+    </dependency>
+    <dependency>
+        <groupId>io.cucumber</groupId>
+        <artifactId>cucumber-junit</artifactId>
+        <version>7.2.3</version>
+        <scope>test</scope>
+    </dependency>
+    <!-- HTTP Client for API Calls -->
+    <dependency>
+        <groupId>org.apache.httpcomponents</groupId>
+        <artifactId>httpclient</artifactId>
+        <version>4.5.13</version>
+    </dependency>
+    <!-- JSON Processing -->
+    <dependency>
+        <groupId>com.google.code.gson</groupId>
+        <artifactId>gson</artifactId>
+        <version>2.8.6</version>
+    </dependency>
+    <!-- JUnit -->
+    <dependency>
+        <groupId>junit</groupId>
+        <artifactId>junit</artifactId>
+        <version>4.13.1</version>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+Step 2: Write Gherkin Feature Files
+Create a new file named getUser.feature in your project under src/test/resources/features. This feature file will contain your Gherkin syntax for the API test.
+
+gherkin
+Copy code
+Feature: Get User API Feature
+
+  Scenario: Get user details with valid user ID
+    Given The API endpoint is "https://jsonplaceholder.typicode.com/users/1"
+    When A user retrieves the user by ID
+    Then The status code is 200
+    And The received user name is "Leanne Graham"
+Step 3: Implement Step Definitions
+Create a Java class named GetUserSteps.java under src/test/java/stepdefinitions. This class will contain the implementation of your Gherkin steps.
+
+java
+Copy code
+package stepdefinitions;
+
+import static org.junit.Assert.assertEquals;
+
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.Then;
+import io.cucumber.java.en.When;
+
+public class GetUserSteps {
+
+    private String apiUrl;
+    private CloseableHttpResponse response;
+
+    @Given("The API endpoint is {string}")
+    public void the_api_endpoint_is(String url) {
+        this.apiUrl = url;
+    }
+
+    @When("A user retrieves the user by ID")
+    public void a_user_retrieves_the_user_by_id() throws Exception {
+        CloseableHttpClient httpClient = HttpClients.createDefault();
+        HttpGet request = new HttpGet(apiUrl);
+        this.response = httpClient.execute(request);
+    }
+
+    @Then("The status code is {int}")
+    public void the_status_code_is(Integer statusCode) throws Exception {
+        assertEquals(statusCode.intValue(), response.getStatusLine().getStatusCode());
+    }
+
+    @Then("The received user name is {string}")
+    public void the_received_user_name_is(String expectedName) throws Exception {
+        String responseBody = EntityUtils.toString(response.getEntity());
+        JsonObject jsonResponse = JsonParser.parseString(responseBody).getAsJsonObject();
+        String actualName = jsonResponse.get("name").getAsString();
+        assertEquals(expectedName, actualName);
+    }
+}
+Step 4: Run Your Test
+Create a runner class to execute your Cucumber test.
+
+java
+Copy code
+package runners;
+
+import io.cucumber.junit.Cucumber;
+import io.cucumber.junit.CucumberOptions;
+import org.junit.runner.RunWith;
+
+@RunWith(Cucumber.class)
+@CucumberOptions(
+    features = "src/test/resources/features",
+    glue = "stepdefinitions",
+    plugin = {"pretty", "html:target/cucumber"}
+)
+public class TestRunner {
+}
+To run your tests, simply execute the TestRunner class as a JUnit test. Cucumber will automatically pick up your feature files and the corresponding step definitions, executing the tests accordingly.
+
+This example demonstrates a basic API test for retrieving user details. You can extend this by adding more scenarios and steps for different endpoints and operations. Remember to adapt the URL and expected responses to match the actual API you're testing.
+
+
+
+
+Implementing the same API test in Karate is more straightforward due to its built-in capabilities for handling HTTP requests, JSON responses, and assertions without the need for external libraries or detailed step definitions. Here’s how you can achieve similar functionality with Karate for testing an API endpoint.
+
+Step 1: Set Up Your Project
+First, create a Maven project and add Karate's dependency to your pom.xml file:
+
+xml
+Copy code
+<dependencies>
+    <dependency>
+        <groupId>com.intuit.karate</groupId>
+        <artifactId>karate-junit5</artifactId>
+        <version>1.1.0</version>
+        <scope>test</scope>
+    </dependency>
+    <!-- Add karate-apache for HTTP -->
+    <dependency>
+        <groupId>com.intuit.karate</groupId>
+        <artifactId>karate-apache</artifactId>
+        <version>1.1.0</version>
+        <scope>test</scope>
+    </dependency>
+    <!-- For parallel execution -->
+    <dependency>
+        <groupId>com.intuit.karate</groupId>
+        <artifactId>karate-core</artifactId>
+        <version>1.1.0</version>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+Step 2: Write Karate Feature File
+Create a new file named getUser.feature in your project under src/test/java/examples. In Karate, feature files can contain both the scenario description and the steps to execute, including making HTTP requests and asserting responses.
+
+gherkin
+Copy code
+Feature: Get User API Feature
+
+  Scenario: Get user details with valid user ID
+    Given url 'https://jsonplaceholder.typicode.com/users/1'
+    When method get
+    Then status 200
+    And match response.name == 'Leanne Graham'
+This feature file directly specifies the API endpoint, the type of HTTP request, the expected status code, and how to match part of the JSON response.
+
+Step 3: Create a Test Runner
+Karate uses JUnit to run the feature files. Create a new Java class in the same directory as your feature file for running your Karate tests.
+
+java
+Copy code
+package examples;
+
+import com.intuit.karate.junit5.Karate;
+
+class ExamplesTest {
+    
+    @Karate.Test
+    Karate testGetUser() {
+        return Karate.run("getUser").relativeTo(getClass());
+    }
+}
+This runner class tells JUnit to execute the Karate test defined in getUser.feature. Karate takes care of parsing the Gherkin syntax, making the HTTP requests, and asserting the responses as described.
+
+Step 4: Run Your Test
+To execute your tests, run the ExamplesTest class as a JUnit test. This can be done through your IDE or via Maven on the command line:
+
+shell
+Copy code
+mvn test
+Karate will automatically find and execute the getUser.feature scenario, testing the API endpoint as specified.
+
+
+
+
+
+
 
