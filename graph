@@ -91,13 +91,13 @@ The @requires directive specifies which fields each type depends on from upstrea
 In the gateway schema stitching section, we extend each type and specify how they're connected and dependent on each other.
 This approach allows you to maintain separate schemas for each entity while defining relationships and dependencies between them in the federated super graph.
 
-
+*************
 If the customer subgraph is returning multiple items in the response based on the account ID, it suggests a one-to-many relationship between accounts and customers. In such cases, you can still stitch the schemas together in a federated architecture, but you need to adjust the schema design and federation directives accordingly.
 
 Here's how you can modify the schema and federation directives to handle this scenario:
 
 graphql
-Copy code
+code
 # Account schema
 type Account @key(fields: "id") {
   id: ID!
@@ -149,7 +149,7 @@ This approach enables you to stitch together the schemas while accommodating the
 Here's an example of how the response might look like for the given GraphQL schema:
 
 json
-Copy code
+code
 {
   "data": {
     "account": {
@@ -203,7 +203,7 @@ You can still support a consumer who only wants customer data with the above sch
 For example, consider the following GraphQL query:
 
 graphql
-Copy code
+code
 query {
   account(id: "123") {
     id
@@ -223,7 +223,7 @@ With this query, the server will only return the specified fields for customers 
 If one of the consumers specifically wants only card data, you can support that with the provided schema. In GraphQL, clients can tailor their queries to request only the fields they need, allowing them to fetch card data exclusively. Here's how you can structure the GraphQL query:
 
 graphql
-Copy code
+code
 query {
   account(id: "123") {
     id
@@ -243,7 +243,7 @@ Here are the sample responses for both use cases:
 
 Response for fetching only customer data:
 json
-Copy code
+code
 {
   "data": {
     "account": {
@@ -261,7 +261,7 @@ Copy code
 }
 Response for fetching only card data:
 json
-Copy code
+code
 {
   "data": {
     "account": {
