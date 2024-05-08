@@ -1,0 +1,92 @@
+When building GraphQL APIs for a scenario like credit card accounts where you need to retrieve data from multiple entities (accounts, customers, and cards), it's essential to design an efficient schema that reflects the relationships between these entities. Here's an example of how you can structure the GraphQL schema:
+
+graphql
+Copy code
+type Account {
+  id: ID!
+  accountNumber: String!
+  balance: Float!
+  # Other account fields...
+  customers: [Customer!]!
+}
+
+type Customer {
+  id: ID!
+  firstName: String!
+  lastName: String!
+  email: String!
+  # Other customer fields...
+  cards: [Card!]!
+}
+
+type Card {
+  id: ID!
+  cardNumber: String!
+  expirationDate: String!
+  # Other card fields...
+}
+
+type Query {
+  account(id: ID!): Account
+  customer(id: ID!): Customer
+  card(id: ID!): Card
+}
+In this schema:
+
+Each Account type has an array of Customer objects representing the customers associated with that account.
+Each Customer type has an array of Card objects representing the cards owned by that customer.
+The Query type defines entry points to fetch individual accounts, customers, and cards by their IDs.
+When federating these schemas using Apollo Federation, you typically maintain separate schemas for each entity (account, customer, card), and then use federation directives to indicate how these schemas should be stitched together to form a unified graph.
+
+For example, you might have a separate schema for accounts, customers, and cards, and then use federation directives like @key, @requires, and @provides to define relationships and dependencies between these schemas. Here's a high-level overview:
+
+graphql
+Copy code
+# Account schema
+type Account @key(fields: "id") {
+  id: ID!
+  accountNumber: String!
+  balance: Float!
+  # Other account fields...
+}
+
+# Customer schema
+type Customer @key(fields: "id") {
+  id: ID!
+  firstName: String!
+  lastName: String!
+  email: String!
+  # Other customer fields...
+  account: Account! @provides(fields: "id")
+}
+
+# Card schema
+type Card @key(fields: "id") {
+  id: ID!
+  cardNumber: String!
+  expirationDate: String!
+  # Other card fields...
+  customer: Customer! @provides(fields: "id")
+}
+
+# Gateway schema stitching
+extend type Account @key(fields: "id") {
+  id: ID! @external
+  customers: [Customer!]! @requires(fields: "id")
+}
+
+extend type Customer @key(fields: "id") {
+  id: ID! @external
+  cards: [Card!]! @requires(fields: "id")
+}
+
+extend type Card @key(fields: "id") {
+  id: ID! @external
+}
+In this example:
+
+Each type (Account, Customer, Card) specifies a unique identifier (@key directive) used for federation.
+The @provides directive indicates which fields each type provides to downstream services.
+The @requires directive specifies which fields each type depends on from upstream services.
+In the gateway schema stitching section, we extend each type and specify how they're connected and dependent on each other.
+This approach allows you to maintain separate schemas for each entity while defining relationships and dependencies between them in the federated super graph.
