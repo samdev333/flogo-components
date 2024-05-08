@@ -90,3 +90,209 @@ The @provides directive indicates which fields each type provides to downstream 
 The @requires directive specifies which fields each type depends on from upstream services.
 In the gateway schema stitching section, we extend each type and specify how they're connected and dependent on each other.
 This approach allows you to maintain separate schemas for each entity while defining relationships and dependencies between them in the federated super graph.
+
+
+If the customer subgraph is returning multiple items in the response based on the account ID, it suggests a one-to-many relationship between accounts and customers. In such cases, you can still stitch the schemas together in a federated architecture, but you need to adjust the schema design and federation directives accordingly.
+
+Here's how you can modify the schema and federation directives to handle this scenario:
+
+graphql
+Copy code
+# Account schema
+type Account @key(fields: "id") {
+  id: ID!
+  accountNumber: String!
+  balance: Float!
+  # Other account fields...
+}
+
+# Customer schema
+type Customer @key(fields: "id") {
+  id: ID!
+  firstName: String!
+  lastName: String!
+  email: String!
+  # Other customer fields...
+  account: Account! @provides(fields: "id")
+}
+
+# Card schema
+type Card @key(fields: "id") {
+  id: ID!
+  cardNumber: String!
+  expirationDate: String!
+  # Other card fields...
+  customer: Customer! @provides(fields: "id")
+}
+
+# Gateway schema stitching
+extend type Account @key(fields: "id") {
+  id: ID! @external
+  customers: [Customer!]! @requires(fields: "accountNumber") # Adjust based on the actual field used to link accounts and customers
+}
+
+extend type Customer @key(fields: "id") {
+  id: ID! @external
+}
+
+extend type Card @key(fields: "id") {
+  id: ID! @external
+}
+In this modified schema:
+
+The Account type remains the same, representing individual accounts.
+The Customer type represents individual customers but no longer contains an array of customers under each account.
+The customers field in the extended Account type now returns an array of customers based on the account ID.
+The @requires directive in the customers field specifies that the downstream service requires the accountNumber (or any other field used to link accounts and customers) to resolve the array of customers.
+This approach enables you to stitch together the schemas while accommodating the one-to-many relationship between accounts and customers.
+
+Here's an example of how the response might look like for the given GraphQL schema:
+
+json
+Copy code
+{
+  "data": {
+    "account": {
+      "id": "123",
+      "accountNumber": "ACCT123",
+      "balance": 5000.0,
+      "customers": [
+        {
+          "id": "CUST456",
+          "firstName": "John",
+          "lastName": "Doe",
+          "email": "john.doe@example.com",
+          "cards": [
+            {
+              "id": "CARD001",
+              "cardNumber": "1234567890123456",
+              "expiryDate": "12/25"
+            },
+            {
+              "id": "CARD002",
+              "cardNumber": "9876543210987654",
+              "expiryDate": "10/24"
+            }
+          ]
+        },
+        {
+          "id": "CUST789",
+          "firstName": "Jane",
+          "lastName": "Smith",
+          "email": "jane.smith@example.com",
+          "cards": [
+            {
+              "id": "CARD003",
+              "cardNumber": "1111222233334444",
+              "expiryDate": "08/23"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+In this updated example:
+
+Each customer object within the customers array now contains an additional cards array.
+Each card object in the cards array includes id, cardNumber, and expiryDate fields.
+The cards array provides card information for each customer associated with the account.
+
+You can still support a consumer who only wants customer data with the above schema. In GraphQL, clients can specify exactly what data they need, and the server will respond accordingly. If a consumer only wants customer data without card information, they can simply request the relevant fields for customers in their GraphQL query.
+
+For example, consider the following GraphQL query:
+
+graphql
+Copy code
+query {
+  account(id: "123") {
+    id
+    accountNumber
+    balance
+    customers {
+      id
+      firstName
+      lastName
+      email
+    }
+  }
+}
+With this query, the server will only return the specified fields for customers associated with the account, without including card information. This allows clients to retrieve only the data they need, resulting in more efficient network communication and reduced overhead.
+
+
+If one of the consumers specifically wants only card data, you can support that with the provided schema. In GraphQL, clients can tailor their queries to request only the fields they need, allowing them to fetch card data exclusively. Here's how you can structure the GraphQL query:
+
+graphql
+Copy code
+query {
+  account(id: "123") {
+    id
+    accountNumber
+    balance
+    cards {
+      id
+      cardNumber
+      cardType
+      expirationDate
+    }
+  }
+}
+With this query, the server will respond with card data associated with the specified account, without including customer information. This flexibility allows clients to retrieve precisely the data they require, resulting in efficient and targeted data retrieval.
+
+Here are the sample responses for both use cases:
+
+Response for fetching only customer data:
+json
+Copy code
+{
+  "data": {
+    "account": {
+      "id": "123",
+      "accountNumber": "ACC123",
+      "balance": 5000,
+      "customer": {
+        "id": "CUST456",
+        "name": "John Doe",
+        "email": "john@example.com",
+        "phone": "+1234567890"
+      }
+    }
+  }
+}
+Response for fetching only card data:
+json
+Copy code
+{
+  "data": {
+    "account": {
+      "id": "123",
+      "accountNumber": "ACC123",
+      "balance": 5000,
+      "cards": [
+        {
+          "id": "CARD789",
+          "cardNumber": "1234567890123456",
+          "cardType": "Credit",
+          "expirationDate": "12/25"
+        },
+        {
+          "id": "CARD987",
+          "cardNumber": "9876543210987654",
+          "cardType": "Debit",
+          "expirationDate": "06/24"
+        }
+      ]
+    }
+  }
+}
+These responses contain only the requested data, either customer information or card information, based on the client's query.
+
+
+
+
+
+
+
+
+
+
