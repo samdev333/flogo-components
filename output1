@@ -261,3 +261,242 @@ Demonstrate how you used GitHub Copilot to scaffold the GraphQL API, generate do
 Show Results:
 
 Run the GraphQL server, execute test cases, and demonstrate the generated test data.
+
+
+**********************
+
+Step-by-Step Process
+1. Define a Log Stream
+First, define a log stream in CICS. This can be done using the CICS System Definition (CSD) or Resource Definition Online (RDO).
+
+Example Definition:
+
+plaintext
+Copy code
+DEFINE LOGSTREAM(LOGSTREAM_NAME) DESCRIPTION('VSAM update log stream')
+2. Create the CICS Exit Program
+Write a CICS exit program that will capture updates to the VSAM file and write the relevant data to the log stream. This program will be written in COBOL and use CICS commands.
+
+Example COBOL Exit Program:
+
+cobol
+Copy code
+IDENTIFICATION DIVISION.
+PROGRAM-ID. VSAM-UPDATE-EXIT.
+
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+01 LOG-RECORD.
+   05 LOG-DATA PIC X(256).  * Adjust size as needed
+
+LINKAGE SECTION.
+01 DFHEIBLK.
+01 DFHCOMMAREA.
+   05 UPDATE-RECORD PIC X(256).  * Adjust size as needed
+
+PROCEDURE DIVISION USING DFHEIBLK DFHCOMMAREA.
+MAIN-PARA.
+    MOVE UPDATE-RECORD TO LOG-DATA
+    EXEC CICS
+        WRITEQ TS
+            QUEUE('VSAM-LOG-STREAM')
+            FROM(LOG-DATA)
+            LENGTH(LENGTH OF LOG-DATA)
+            RESP(RESP-CODE)
+    END-EXEC.
+    IF RESP-CODE NOT EQUAL DFHRESP(NORMAL)
+        DISPLAY 'ERROR WRITING TO LOG STREAM' RESP-CODE
+    END-IF.
+    EXEC CICS RETURN END-EXEC.
+    STOP RUN.
+3. Compile and Install the Exit Program
+Compile the COBOL program and install it in the CICS region.
+
+Steps to Compile:
+
+Use your mainframe's COBOL compiler to compile the program.
+Ensure the compiled program is available in the CICS load library.
+4. Define and Configure the Exit Program in CICS
+Configure the exit program in CICS to be triggered on VSAM file updates. This can be done by defining a file control exit (FCX) in CICS.
+
+Define the Exit Program:
+
+plaintext
+Copy code
+DEFINE PROGRAM(VSAM-UPDATE-EXIT) GROUP(MYGRP) LANGUAGE(COBOL)
+Define the File Control Exit:
+
+plaintext
+Copy code
+DEFINE EXITPROGRAM(VSAM-UPDATE-EXIT) PROGRAM(VSAM-UPDATE-EXIT) EXITPOINT(FCP)
+Define the VSAM File and Associate the Exit:
+
+plaintext
+Copy code
+DEFINE FILE(VSAMFILE) GROUP(MYGRP) EXIT(VSAM-UPDATE-EXIT)
+5. Update CICS Configuration
+Update the CICS configuration to ensure that the exit program is invoked on VSAM file updates. This may involve editing CICS resource definitions and ensuring that the exit program is correctly associated with the VSAM file.
+
+Example JCL to Define CICS Resources:
+
+plaintext
+Copy code
+//DFHCSDUP EXEC PGM=DFHCSDUP
+//SYSPRINT DD SYSOUT=*
+//DFHCSD    DD DSN=CICS.CSD,DISP=SHR
+//SYSIN     DD *
+DEFINE PROGRAM(VSAM-UPDATE-EXIT) GROUP(MYGRP) LANGUAGE(COBOL)
+DEFINE EXITPROGRAM(VSAM-UPDATE-EXIT) PROGRAM(VSAM-UPDATE-EXIT) EXITPOINT(FCP)
+DEFINE FILE(VSAMFILE) GROUP(MYGRP) EXIT(VSAM-UPDATE-EXIT)
+6. Test the Setup
+Perform testing to ensure that the exit program is correctly writing VSAM updates to the log stream. This involves:
+
+Performing an update on the VSAM file.
+Verifying that the log stream contains the expected log records.
+Testing Steps:
+
+Update a record in the VSAM file.
+Use CICS or other tools to inspect the log stream and verify that the update was logged.
+Example Test Program:
+
+cobol
+Copy code
+IDENTIFICATION DIVISION.
+PROGRAM-ID. VSAM-TEST.
+
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+01 UPDATE-RECORD.
+   05 DATA-FIELD PIC X(256).
+
+PROCEDURE DIVISION.
+MAIN-PARA.
+    MOVE 'Test Data' TO DATA-FIELD
+    EXEC CICS
+        WRITE
+            FILE('VSAMFILE')
+            FROM(DATA-FIELD)
+            RESP(RESP-CODE)
+    END-EXEC.
+    IF RESP-CODE NOT EQUAL DFHRESP(NORMAL)
+        DISPLAY 'ERROR UPDATING VSAM FILE' RESP-CODE
+    END-IF.
+    EXEC CICS RETURN END-EXEC.
+    STOP RUN.
+Conclusion
+By following these steps, you can create a CICS exit program to capture updates to a VSAM file and write them to a log stream. This approach allows for effective monitoring and logging of VSAM updates without significant impact on performance.
+
+Is this process going to impact VSAM performance as it is used for our credit card authorizations and don’t want to impact that unit or work 
+ChatGPT
+Implementing a CICS exit program to log VSAM updates to a log stream introduces additional processing steps, which could potentially impact the performance of your credit card authorization system. To minimize this impact, consider the following approaches and best practices:
+
+Approaches to Minimize Impact on VSAM Performance
+Asynchronous Logging:
+
+Concept: Perform logging asynchronously to avoid delaying the main transaction. This can be achieved by queuing log entries and processing them in a separate task.
+Implementation: Use CICS transient data queues or temporary storage queues to buffer log entries. A separate task can then process these entries and write them to the log stream.
+Selective Logging:
+
+Concept: Only log critical updates instead of all updates to reduce the volume of logging.
+Implementation: Implement logic in your exit program to filter and log only the necessary updates based on specific criteria.
+Efficient Exit Program Design:
+
+Concept: Optimize the exit program to execute as efficiently as possible.
+Implementation: Ensure the exit program performs minimal processing, uses efficient data structures, and avoids unnecessary operations.
+Batch Processing:
+
+Concept: Accumulate updates and write them to the log stream in batches rather than logging each update individually.
+Implementation: Use a batch job or a scheduled task to periodically write accumulated log entries to the log stream.
+Example: Asynchronous Logging with Temporary Storage Queues
+Step-by-Step Implementation:
+
+Modify Exit Program to Write to Temporary Storage Queue:
+Update the exit program to write log entries to a temporary storage queue instead of directly to the log stream.
+cobol
+Copy code
+IDENTIFICATION DIVISION.
+PROGRAM-ID. VSAM-UPDATE-EXIT.
+
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+01 LOG-RECORD.
+   05 LOG-DATA PIC X(256).  * Adjust size as needed
+
+LINKAGE SECTION.
+01 DFHEIBLK.
+01 DFHCOMMAREA.
+   05 UPDATE-RECORD PIC X(256).  * Adjust size as needed
+
+PROCEDURE DIVISION USING DFHEIBLK DFHCOMMAREA.
+MAIN-PARA.
+    MOVE UPDATE-RECORD TO LOG-DATA
+    EXEC CICS
+        WRITEQ TS
+            QUEUE('LOG-QUEUE')
+            FROM(LOG-DATA)
+            LENGTH(LENGTH OF LOG-DATA)
+            RESP(RESP-CODE)
+    END-EXEC.
+    IF RESP-CODE NOT EQUAL DFHRESP(NORMAL)
+        DISPLAY 'ERROR WRITING TO TEMPORARY STORAGE QUEUE' RESP-CODE
+    END-IF.
+    EXEC CICS RETURN END-EXEC.
+    STOP RUN.
+Create a Separate Task to Process the Queue:
+Define a new CICS task or transaction to process the temporary storage queue and write entries to the log stream.
+Example COBOL Program for Log Processing:
+
+cobol
+Copy code
+IDENTIFICATION DIVISION.
+PROGRAM-ID. LOG-PROCESSOR.
+
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+01 LOG-RECORD.
+   05 LOG-DATA PIC X(256).  * Adjust size as needed
+
+PROCEDURE DIVISION.
+MAIN-PARA.
+    PERFORM UNTIL END-OF-QUEUE
+        EXEC CICS
+            READQ TS
+                QUEUE('LOG-QUEUE')
+                INTO(LOG-DATA)
+                LENGTH(LENGTH OF LOG-DATA)
+                RESP(RESP-CODE)
+        END-EXEC.
+        IF RESP-CODE = DFHRESP(NORMAL)
+            EXEC CICS
+                WRITEQ TS
+                    QUEUE('VSAM-LOG-STREAM')
+                    FROM(LOG-DATA)
+                    LENGTH(LENGTH OF LOG-DATA)
+                    RESP(RESP-CODE)
+            END-EXEC.
+            IF RESP-CODE NOT EQUAL DFHRESP(NORMAL)
+                DISPLAY 'ERROR WRITING TO LOG STREAM' RESP-CODE
+            END-IF
+        ELSE
+            MOVE 'YES' TO END-OF-QUEUE
+        END-IF
+    END-PERFORM.
+    EXEC CICS RETURN END-EXEC.
+    STOP RUN.
+Schedule the Log Processing Task:
+Schedule the log processing task to run at intervals or trigger it based on specific events.
+Example JCL to Schedule Task:
+
+plaintext
+Copy code
+//SCHEDULE EXEC PGM=DFHCSDUP
+//SYSPRINT DD SYSOUT=*
+//DFHCSD    DD DSN=CICS.CSD,DISP=SHR
+//SYSIN     DD *
+DEFINE TRANSACTION(LOGP) PROGRAM(LOG-PROCESSOR) TASKDATALOC(ANY) TWASIZE(0)
+DEFINE TRANCLASS(LOGPROC) MXT(1)
+//
+Conclusion
+By implementing asynchronous logging, you can minimize the impact on VSAM performance. Writing log entries to a temporary storage queue and processing them in a separate task allows the main transaction to complete without delay. This approach ensures that logging does not interfere with the critical operations of your credit card authorization system.
+
+If further performance optimization is needed, consider selective logging and efficient exit program design. These strategies help balance the need for logging with the requirement to maintain high performance for your core transaction processing.
