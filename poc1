@@ -1,3 +1,20 @@
 Automate process to extract data from payment remittance advice messages and match to invoices: High business value due to operational efficiency.
 Build a sales assistant offering real-time conversational interaction and research: High innovation and direct revenue impact.
 Automate account maintenance requests received from customers via e-mail: Easier to build with significant operational cost savings.
+
+
+1. Automate Process to Extract Data from Payment Remittance Advice Messages and Match to Invoices
+Develop a system to automate the extraction of data from payment remittance advice messages and match it to corresponding invoices. The scope includes creating a UI for uploading remittance advice messages and a dashboard to display matched and unmatched invoices, automating the data extraction and matching process, and ensuring efficient data storage and retrieval.
+
+2. Build a Sales Assistant Offering Real-Time Conversational Interaction and Research
+Create a sales assistant to provide real-time conversational interactions and research capabilities to enhance sales team efficiency and effectiveness. The scope covers developing a Teams app for user interaction with the assistant, integrating real-time conversational capabilities, and enabling backend logic to support internal database queries and external API interactions.
+
+3. Automate Account Maintenance Requests Received from Customers via E-Mail
+Develop a system to automate the processing of account maintenance requests received via email, reducing operational costs significantly. The scope involves creating an interface for tracking the status of maintenance requests, automating email processing and response generation, and implementing a workflow to handle the business logic and update request statuses efficiently.
+
+
+
+
+
+
+
