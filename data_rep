@@ -1,0 +1,159 @@
+PostgreSQL has built-in native capabilities for table-to-table and database-to-database replication. Here are some of the key options available for on-prem PostgreSQL replication:
+
+1. Logical Replication (Table-to-Table Replication)
+Logical replication allows for more granular replication, such as table-to-table replication. It enables selective replication of individual tables between PostgreSQL instances, which can be on the same server or different servers.
+
+Key Features:
+Table-level replication: You can replicate specific tables from one PostgreSQL instance to another.
+Flexible replication: You can choose which changes (INSERT, UPDATE, DELETE) are replicated.
+Asynchronous replication: Changes from the primary are asynchronously replicated to the subscriber.
+Supports replication across different versions of PostgreSQL.
+How to Set Up Logical Replication (Table-to-Table Replication):
+Enable WAL Level:
+
+Ensure that the WAL (Write-Ahead Logging) level is set to logical in the primary PostgreSQL server:
+bash
+Copy code
+wal_level = logical
+Create a Publication (on Primary):
+
+A publication defines what tables and changes to replicate. Run the following command on the primary database:
+sql
+Copy code
+CREATE PUBLICATION my_publication FOR TABLE my_table;
+You can also replicate all tables in the database:
+sql
+Copy code
+CREATE PUBLICATION my_publication FOR ALL TABLES;
+Create a Subscription (on Secondary):
+
+On the secondary database (which will receive the replicated data), create a subscription:
+
+sql
+Copy code
+CREATE SUBSCRIPTION my_subscription CONNECTION 'host=<primary_host> dbname=<primary_db> user=<replication_user> password=<password>' PUBLICATION my_publication;
+This command connects the secondary database to the primary and starts replicating changes from the specified tables.
+
+Use Cases:
+Table-to-table replication: Useful for selectively replicating critical tables between databases or servers.
+Read-only replicas: Can be used to set up a subset of tables on a replica for reporting or read scaling purposes.
+2. Streaming Replication (Database-to-Database Replication)
+Streaming replication is a native PostgreSQL feature for database-to-database replication, typically used for high-availability (HA) setups. It allows real-time, continuous replication from one PostgreSQL database (primary) to another (replica).
+
+Key Features:
+Full database replication: Replicates the entire database from the primary server to the replica.
+Synchronous or asynchronous replication: Can be configured as synchronous (real-time consistency) or asynchronous (eventual consistency).
+Hot Standby: The replica can be configured for read-only queries (Hot Standby), making it useful for read scaling.
+Failover and high availability: Useful for disaster recovery setups.
+How to Set Up Streaming Replication (Database-to-Database Replication):
+Configure the Primary Server:
+
+Edit the PostgreSQL configuration file (postgresql.conf) on the primary server:
+
+bash
+Copy code
+wal_level = replica
+max_wal_senders = 10
+synchronous_standby_names = '*'
+Add the replica's IP to the pg_hba.conf file for replication:
+
+bash
+Copy code
+host replication all <replica_ip>/32 md5
+Restart the primary server.
+
+Create a Replication User:
+
+On the primary server, create a replication user:
+sql
+Copy code
+CREATE USER replication_user WITH REPLICATION ENCRYPTED PASSWORD '<password>';
+Backup the Primary Database:
+
+Take a backup of the primary server’s data and copy it to the replica:
+bash
+Copy code
+pg_basebackup -h <primary_host> -D /var/lib/postgresql/data -U replication_user -P -v --wal-method=stream
+Configure the Replica Server:
+
+Edit the PostgreSQL configuration file (postgresql.conf) on the replica:
+bash
+Copy code
+hot_standby = on
+Create a recovery.conf file with the connection details for the primary server:
+bash
+Copy code
+standby_mode = 'on'
+primary_conninfo = 'host=<primary_host> port=5432 user=replication_user password=<password>'
+Start the Replica:
+
+Start the PostgreSQL service on the replica server. It will start streaming data from the primary server.
+Use Cases:
+High availability: Used for creating a replica of the entire database for failover and disaster recovery.
+Scaling read operations: Use the replica for read operations while the primary handles write-heavy workloads.
+3. Logical Replication with PostgreSQL Foreign Data Wrapper (FDW)
+Another method for replication is using Foreign Data Wrapper (FDW), which allows you to access tables in a remote database (such as DB2 or PostgreSQL) as though they were local tables. While not exactly "replication," you can use FDW to access and move data between databases.
+
+Key Features:
+Query remote tables: Use FDW to query a table in another PostgreSQL instance and move the data.
+Can be combined with materialized views for creating local copies of remote data.
+How to Set Up PostgreSQL FDW:
+Install the FDW Extension:
+
+First, install the postgres_fdw extension in both the primary and secondary databases:
+sql
+Copy code
+CREATE EXTENSION postgres_fdw;
+Create a Foreign Server:
+
+Set up the foreign server in the secondary database to access the primary database:
+sql
+Copy code
+CREATE SERVER my_foreign_server FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host '<primary_host>', dbname '<dbname>', port '5432');
+Create User Mapping:
+
+Define the user mapping to connect to the primary database:
+sql
+Copy code
+CREATE USER MAPPING FOR current_user SERVER my_foreign_server OPTIONS (user '<primary_user>', password '<password>');
+Import Tables or Create Foreign Tables:
+
+You can either import all tables or define specific foreign tables in the secondary database:
+sql
+Copy code
+IMPORT FOREIGN SCHEMA public FROM SERVER my_foreign_server INTO public;
+Or manually define a foreign table:
+sql
+Copy code
+CREATE FOREIGN TABLE my_foreign_table (id INT, name TEXT) SERVER my_foreign_server OPTIONS (table_name 'my_table');
+Replicate or Query Data:
+
+You can now query the foreign table as if it were a local table, or use it to move data into a local table for replication.
+Use Cases:
+Cross-database queries: Allows querying between different PostgreSQL databases without fully replicating the data.
+Ad-hoc replication: Can be used for one-time or periodic data replication by copying data from the foreign table to a local table.
+4. pglogical (Advanced Logical Replication)
+pglogical is a more advanced logical replication tool that provides better control over the replication process and more features than the built-in logical replication.
+
+Key Features:
+Supports schema changes (DDL replication).
+Conflict resolution for data inconsistencies.
+Allows bidirectional replication.
+How to Set Up pglogical:
+Install pglogical:
+Install the pglogical extension on both the primary and secondary databases.
+Configure pglogical:
+On the primary, create a pglogical node and define what tables to replicate.
+Subscribe on the Replica:
+On the secondary database, create a subscription to the primary database node.
+Use Cases:
+Complex replication scenarios where built-in logical replication might not be enough.
+Cross-version replication for migrating between different PostgreSQL versions.
+Conclusion:
+For native PostgreSQL replication between tables or databases, you can use:
+
+Logical Replication for table-to-table replication.
+Streaming Replication for database-to-database replication.
+Foreign Data Wrapper (FDW) for querying and replicating data across multiple databases.
+pglogical for more advanced, bidirectional logical replication.
+Each method has its strengths, so the right choice depends on whether you need granular table replication or full database replication for high availability or disaster recovery.
