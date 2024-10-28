@@ -157,3 +157,30 @@ Streaming Replication for database-to-database replication.
 Foreign Data Wrapper (FDW) for querying and replicating data across multiple databases.
 pglogical for more advanced, bidirectional logical replication.
 Each method has its strengths, so the right choice depends on whether you need granular table replication or full database replication for high availability or disaster recovery.
+
+
+************************
+Slide Title: Unified Approach to Optimize DB2 to PostgreSQL Data Load for Credit Card Read Store
+1. Problem Statement:
+Legacy Process Challenges:
+Team Dependencies: Complex hand-offs with CDA, MPS, and PAL teams for data extraction, file parsing, and load into Cassandra.
+Resource Intensive: Time-consuming, costly, and prone to delays due to multi-step workflows and dependency on DD job configurations.
+2. A Unified Solution through Cross-Team Collaboration:
+Collaborative Effort within Payments Organization:
+PAL & MPS Teams Partnered to build an innovative, streamlined ETL process using IBM DataStage.
+Seamless Coordination: Teams worked as a unified force to develop and deliver the new solution, transforming workflows within a short timeframe.
+Single-Point Ownership: Simplified ownership by enabling the PAL & MPS teams to fully manage and execute the process.
+3. Key Solution Highlights:
+Direct DB2 to PostgreSQL Loading: Bypasses flat files and eliminates the need for DD job configuration.
+Self-Sufficient Teams: PAL & MPS teams achieved independence from CDA and external dependencies, empowering them to manage the process end-to-end.
+Optimized for Speed and Efficiency: Immediate data availability with fewer hops and faster access to the credit card read store.
+4. Impact:
+Faster Delivery Across Environments: Completed in DEV and ready to scale across higher environments.
+Enhanced Team Collaboration: A unified approach, showcasing effective teamwork within the payments organization for faster, cost-efficient solutions.
+
+
+
+
+
+
+
