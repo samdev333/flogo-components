@@ -1,0 +1,137 @@
+Here's a complete end-to-end setup using the Karate framework to test GraphQL APIs, compare JSON responses from mainframe and PostgreSQL data sources, and generate an HTML report. This setup includes a Maven project with the necessary structure, dependencies, and example code for testing and reporting.
+
+Project Structure
+plaintext
+Copy code
+src
+├── main
+│   └── java
+└── test
+    └── java
+        └── examples
+            ├── graphql
+            │   └── test_graphql.feature
+            └── BaseTest.java
+pom.xml
+Step 1: Add Dependencies in pom.xml
+Add Karate and the Surefire plugin to your pom.xml to enable test execution and reporting:
+
+xml
+Copy code
+<project>
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example</groupId>
+    <artifactId>karate-graphql-test</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+    </properties>
+
+    <dependencies>
+        <!-- Karate Framework for API Testing -->
+        <dependency>
+            <groupId>com.intuit.karate</groupId>
+            <artifactId>karate-junit5</artifactId>
+            <version>1.2.0</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.0.0-M5</version>
+                <configuration>
+                    <argLine>-Dfile.encoding=UTF-8</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+Step 2: Create a Test Feature File (test_graphql.feature)
+This feature file contains the GraphQL query test for both mainframe and PostgreSQL data sources, along with JSON comparison.
+
+gherkin
+Copy code
+Feature: Test GraphQL API for Mainframe and PostgreSQL Data Sources
+
+Background:
+    # Set the URLs for mainframe and PostgreSQL endpoints (modify as needed)
+    * def mainframeUrl = 'http://localhost:8080/graphql'
+    * def postgresUrl = 'http://localhost:8081/graphql'
+
+Scenario: Validate data consistency from mainframe and PostgreSQL sources
+    # Step 1: Define GraphQL query to fetch customer data
+    Given def query = 
+    """
+    {
+        getCustomerData(id: "12345") {
+            id
+            name
+            balance
+        }
+    }
+    """
+
+    # Step 2: Set headers for GraphQL request
+    Given header Content-Type = 'application/json'
+    And request { query: '#(query)' }
+
+    # Step 3: Execute GraphQL query for mainframe data source
+    Given url mainframeUrl
+    When method POST
+    Then status 200
+    * def mainframeResponse = response
+
+    # Step 4: Execute GraphQL query for PostgreSQL data source
+    Given url postgresUrl
+    And request { query: '#(query)' }
+    When method POST
+    Then status 200
+    * def postgresResponse = response
+
+    # Step 5: Compare responses (e.g., for JSON structure and specific fields)
+    Then match mainframeResponse == postgresResponse
+Step 3: Create a JUnit Test Runner (BaseTest.java)
+This Java class runs the feature file and generates an HTML report.
+
+java
+Copy code
+package examples;
+
+import com.intuit.karate.junit5.Karate;
+
+class BaseTest {
+    @Karate.Test
+    Karate testAll() {
+        return Karate.run("classpath:examples/graphql/test_graphql.feature").relativeTo(getClass());
+    }
+}
+Step 4: Run the Tests and Generate HTML Report
+To run the tests and generate an HTML report, use the following Maven command:
+
+sh
+Copy code
+mvn test
+Step 5: Access the HTML Report
+Once the test run is complete, the HTML report will be available at:
+
+plaintext
+Copy code
+target/karate-reports/karate-summary.html
+Open karate-summary.html in your browser to view the test results and JSON comparison output.
+
+Explanation of Each Step
+GraphQL Query: The feature file defines a GraphQL query to fetch customer data.
+Mainframe and PostgreSQL Data Sources: Two separate requests are made to endpoints simulating mainframe and PostgreSQL data.
+Response Comparison: The match statement in Karate verifies that the JSON responses are identical.
+JUnit Runner: The BaseTest class runs the feature file and produces the report.
+HTML Report: Karate’s built-in reporting provides a graphical HTML summary of the test steps and assertions.
+Additional Customization
+Database Queries: If needed, you can configure direct database access in Karate to fetch data directly for comparison.
+Custom Match Rules: For fields that may vary slightly, you can use match contains or match each assertions for more flexible comparisons.
+Logging: Use Karate’s built-in logging to add more visibility into request and response payloads.
+This setup provides a complete framework for end-to-end test automation of your GraphQL APIs with data source comparisons and a detailed HTML report.
