@@ -63,3 +63,118 @@ As a , my role intersects directly with the purpose of **API World 2024** by dri
 
 The expected outcomes of attending **API World 2024** include gaining deeper insights into the latest advancements in **APIs**, **AI integration**, and **emerging technologies** such as **Generative AI** and **Multi-Agent Systems**, which can enhance current and future projects. The event will provide opportunities to establish strategic partnerships and expand our professional network with industry leaders, potentially leading to new collaborations and business opportunities. Additionally, the event will offer actionable insights and best practices to improve efficiency in API and AI development. Overall, it will help shape our company's **strategic roadmap** and drive innovation, ensuring we stay competitive in the rapidly evolving tech landscape.
 
+
+
+
+
+***********
+
+To address the requirement for a lookup mechanism between transacting PANs and UIDs without bringing the entire read store under PCI scope, you need to isolate or tokenize the sensitive data in compliance with PCI DSS standards. Here are the best options to achieve this:
+
+1. Tokenization Service
+A tokenization service can replace PANs with tokens (UIDs) in the read store, ensuring that sensitive PANs are never stored in plaintext and the database remains out of PCI scope.
+
+How it works:
+
+PANs are tokenized using a tokenization service (e.g., from a PCI-compliant provider).
+Tokens (UIDs) are stored in the read store instead of PANs.
+A separate PCI-compliant token vault handles the mapping between PANs and UIDs.
+Queries needing PANs are routed to the tokenization service.
+Benefits:
+
+The read store remains out of PCI scope because it only contains tokens.
+Tokens can be format-preserving, enabling seamless use in APIs without altering downstream systems.
+Tokenization services are widely supported by PCI-compliant providers like Thales, Fiserv, or Protegrity.
+Implementation:
+
+Use a managed tokenization API/service to handle PAN-UID mapping.
+The PCI-compliant service manages the token vault, and only authorized applications can access it.
+2. Encrypted PAN Lookup Table in a PCI-Compliant System
+Keep a PAN-to-UID lookup table in a dedicated PCI-compliant system, isolated from the rest of the read store.
+
+How it works:
+
+The lookup table is stored in an encrypted database hosted in a PCI-compliant environment.
+The read store only uses UIDs for queries and interactions.
+When a PAN or UID is required, APIs call the PCI-compliant system to retrieve the necessary data.
+Benefits:
+
+Isolation ensures only the lookup table is in PCI scope.
+Simplifies PCI audit as the PCI boundary is clearly defined.
+Encryption and access controls limit exposure of sensitive data.
+Implementation:
+
+Use an encrypted database (e.g., PostgreSQL with TDE, HSM-backed key management) in a PCI-compliant environment.
+Build APIs to handle lookup requests securely.
+3. PAN Tokenization Using Vaultless Solutions
+Use a vaultless tokenization approach, where PANs are tokenized deterministically without requiring a centralized token vault.
+
+How it works:
+
+A cryptographic algorithm (e.g., format-preserving encryption) generates tokens (UIDs) from PANs.
+The algorithm is reversible, allowing token-to-PAN conversion securely when needed.
+Tokens are stored in the read store instead of PANs.
+Benefits:
+
+No need for a separate PCI-compliant token vault.
+Tokens remain consistent across systems, enabling efficient lookups.
+Only the encryption/decryption service is in PCI scope, not the read store.
+Implementation:
+
+Use a library or service that supports format-preserving encryption (e.g., Thales CipherTrust, AWS DKS).
+Ensure cryptographic keys are managed in a secure, PCI-compliant environment.
+4. Proxy-Based PAN Lookup
+Use a proxy service to abstract PAN-to-UID lookup requests and keep the PCI-sensitive operations isolated.
+
+How it works:
+
+A PCI-compliant proxy service handles all operations involving PANs.
+The read store interacts with the proxy using UIDs only.
+Any request requiring a PAN triggers the proxy to retrieve or convert the data.
+Benefits:
+
+Limits PCI scope to the proxy service.
+Simplifies compliance by centralizing PAN management.
+The read store remains outside PCI scope.
+Implementation:
+
+Deploy a PCI-compliant proxy service (e.g., custom API or managed service).
+Integrate the proxy with the read store for seamless UID-based queries.
+5. External Tokenization via a Third-Party Service
+Outsource the PAN-to-UID mapping entirely to a PCI-compliant third-party tokenization provider.
+
+How it works:
+
+PANs are stored and managed by the third-party provider in a PCI-compliant token vault.
+The read store only stores UIDs.
+API calls to the third-party service handle PAN-to-UID and UID-to-PAN translations.
+Benefits:
+
+Offloads PCI compliance to the third-party provider.
+Simplifies implementation by using an existing tokenization service.
+Minimizes internal PCI audit scope.
+Implementation:
+
+Integrate with a tokenization provider (e.g., Fiserv, Stripe, Paymetric).
+Ensure robust access controls to the tokenization API.
+Comparison of Options
+Option	PCI Scope	Implementation Complexity	Performance	Recommended For
+Tokenization Service	Low	Moderate	High (efficient)	General use cases with external tools
+Encrypted Lookup Table	Medium (isolated table)	Moderate	High	In-house PCI-compliant environments
+Vaultless Tokenization	Low	Low	High	Deterministic tokenization needs
+Proxy-Based PAN Lookup	Low (proxy in scope)	Moderate	Medium (proxy latency)	Centralized control of PAN operations
+Third-Party Tokenization Provider	Low	Low	High	Outsourcing PCI compliance
+
+
+
+
+
+
+
+
+
+
+
+
+
+
