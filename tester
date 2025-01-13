@@ -135,18 +135,3 @@ Database Queries: If needed, you can configure direct database access in Karate 
 Custom Match Rules: For fields that may vary slightly, you can use match contains or match each assertions for more flexible comparisons.
 Logging: Use Karate’s built-in logging to add more visibility into request and response payloads.
 This setup provides a complete framework for end-to-end test automation of your GraphQL APIs with data source comparisons and a detailed HTML report.
-
-
-***
-
-curl --location 'https://api.openai.com/v1/chat/completions' \
---header 'Content-Type: application/json' \
---header 'Authorization: Bearer sk-svcacct-N4BSi7VY6aDt7oyhP8uI5pVXUtfQUxboyU4m4Gu5y_4gw_al6V5Y4rVYEaNcI54rzT3BlbkFJj0pf9AVXOLVz3JzKtiAmEHVk2Iiokr7Tjpgc1BND5mMEby-gC81Bf26WYJazl3DeAA' \
---header 'Cookie: __cf_bm=diFKpU0SLrUnOqHxQkLdmhYDyjHymOFXccjUoHYqTVo-1736804425-1.0.1.1-mSHA3_63p2nAOvyk98NzLDqS2acwOJFSTpSO3jleq_eA2.fkfT7C3nhVUbfDaR4CeiupK247EGVL1zBq9molEw; _cfuvid=pQMViiXlITLatp4xSrFkcwIhpRiXOwWpj.4tCzXMHLo-1736804425433-0.0.1.1-604800000' \
---data '{
-    "model": "gpt-3.5-turbo",
-    "messages": [{"role": "user", "content": "Hello, how are you?"}],
-    "max_tokens": 100
-  }'
-
-***
