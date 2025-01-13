@@ -135,10 +135,3 @@ Database Queries: If needed, you can configure direct database access in Karate 
 Custom Match Rules: For fields that may vary slightly, you can use match contains or match each assertions for more flexible comparisons.
 Logging: Use Karate’s built-in logging to add more visibility into request and response payloads.
 This setup provides a complete framework for end-to-end test automation of your GraphQL APIs with data source comparisons and a detailed HTML report.
-
-
-
-****
-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
-
-****
