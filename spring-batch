@@ -1,0 +1,233 @@
+Step-by-Step Guide to Implement a High-Performance Spring Batch Job for Processing 1M Records
+This guide includes: ✅ Reading accounts from PostgreSQL in batches
+✅ Calling 3 REST APIs in parallel (Account, Customer, Card)
+✅ Skipping records if an API call fails
+✅ Performing UPSERT (INSERT if not exists, UPDATE otherwise) on PostgreSQL using JDBC
+✅ Parallel chunk processing for large-scale execution
+
+🛠 Step 1: Setup Spring Boot and Required Dependencies
+Create a Spring Boot project using Spring Initializr and include:
+
+Spring Batch
+Spring Data JPA
+Spring JDBC
+PostgreSQL Driver
+Spring Web
+Lombok
+Add dependencies in pom.xml:
+
+xml
+Copy
+Edit
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-batch</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-jdbc</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+    <scope>runtime</scope>
+</dependency>
+
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-web</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-aop</artifactId>
+</dependency>
+🛠 Step 2: Configure PostgreSQL in application.yml
+yaml
+Copy
+Edit
+spring:
+  datasource:
+    url: jdbc:postgresql://your-db-host:5432/your-database
+    username: your-username
+    password: your-password
+    driver-class-name: org.postgresql.Driver
+  batch:
+    job:
+      enabled: false  # Disable auto-start of batch jobs
+🛠 Step 3: Define Account Entity & Row Mapper
+Account Model
+java
+Copy
+Edit
+@Getter
+@Setter
+@AllArgsConstructor
+@NoArgsConstructor
+public class Account {
+    private String id;
+}
+RowMapper for Database Reads
+java
+Copy
+Edit
+public class AccountRowMapper implements RowMapper<Account> {
+    @Override
+    public Account mapRow(ResultSet rs, int rowNum) throws SQLException {
+        return new Account(rs.getString("account_id"));
+    }
+}
+🛠 Step 4: Implement JdbcPagingItemReader to Read Accounts
+java
+Copy
+Edit
+@Bean
+public JdbcPagingItemReader<Account> accountReader(DataSource dataSource) {
+    JdbcPagingItemReader<Account> reader = new JdbcPagingItemReader<>();
+    reader.setDataSource(dataSource);
+    reader.setQueryProvider(createQueryProvider());
+    reader.setRowMapper(new AccountRowMapper());
+    reader.setPageSize(5000); // Adjust for performance
+    return reader;
+}
+
+private SqlPagingQueryProviderFactoryBean createQueryProvider() {
+    SqlPagingQueryProviderFactoryBean provider = new SqlPagingQueryProviderFactoryBean();
+    provider.setDataSource(dataSource);
+    provider.setSelectClause("SELECT account_id");
+    provider.setFromClause("FROM accounts");
+    provider.setSortKeys(Collections.singletonMap("account_id", Order.ASCENDING));
+    return provider;
+}
+🛠 Step 5: Implement API Calls with Resilience (Skip on Failure)
+We will use CompletableFuture with a try-catch block to skip failed records.
+
+java
+Copy
+Edit
+@Service
+public class ApiService {
+
+    private final ExecutorService executor = Executors.newFixedThreadPool(10); // 10 parallel threads
+
+    public ConsolidatedResponse fetchAllDetails(String accountId) {
+        try {
+            CompletableFuture<AccountResponse> accountFuture = CompletableFuture.supplyAsync(() -> fetchAccountData(accountId), executor);
+            CompletableFuture<CustomerResponse> customerFuture = CompletableFuture.supplyAsync(() -> fetchCustomerData(accountId), executor);
+            CompletableFuture<CardResponse> cardFuture = CompletableFuture.supplyAsync(() -> fetchCardData(accountId), executor);
+
+            CompletableFuture.allOf(accountFuture, customerFuture, cardFuture).join();
+
+            return new ConsolidatedResponse(
+                    accountFuture.join(),
+                    customerFuture.join(),
+                    cardFuture.join()
+            );
+        } catch (Exception e) {
+            log.error("Skipping account {} due to API failure: {}", accountId, e.getMessage());
+            return null; // Return null to indicate skipping this record
+        }
+    }
+}
+🛠 Step 6: Implement ItemProcessor (Skip Failed Records)
+java
+Copy
+Edit
+@Component
+public class AccountProcessor implements ItemProcessor<Account, ConsolidatedResponse> {
+
+    @Autowired
+    private ApiService apiService;
+
+    @Override
+    public ConsolidatedResponse process(Account account) throws Exception {
+        ConsolidatedResponse response = apiService.fetchAllDetails(account.getId());
+        return (response != null) ? response : null; // Skip record if API call failed
+    }
+}
+🛠 Step 7: Implement JDBC UPSERT for PostgreSQL
+PostgreSQL supports UPSERT using ON CONFLICT.
+
+java
+Copy
+Edit
+@Component
+public class AccountWriter implements ItemWriter<ConsolidatedResponse> {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Transactional
+    @Override
+    public void write(List<? extends ConsolidatedResponse> responses) throws Exception {
+        for (ConsolidatedResponse response : responses) {
+            if (response == null) continue; // Skip failed records
+
+            jdbcTemplate.update(
+                "INSERT INTO account_table (account_id, status, balance) VALUES (?, ?, ?) " +
+                "ON CONFLICT (account_id) DO UPDATE SET status = EXCLUDED.status, balance = EXCLUDED.balance",
+                response.getAccountData().getId(),
+                response.getAccountData().getStatus(),
+                response.getAccountData().getBalance()
+            );
+
+            jdbcTemplate.update(
+                "INSERT INTO customer_table (customer_id, name, email) VALUES (?, ?, ?) " +
+                "ON CONFLICT (customer_id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email",
+                response.getCustomerData().getId(),
+                response.getCustomerData().getName(),
+                response.getCustomerData().getEmail()
+            );
+
+            jdbcTemplate.update(
+                "INSERT INTO card_table (card_id, limit, expiry_date) VALUES (?, ?, ?) " +
+                "ON CONFLICT (card_id) DO UPDATE SET limit = EXCLUDED.limit, expiry_date = EXCLUDED.expiry_date",
+                response.getCardData().getId(),
+                response.getCardData().getLimit(),
+                response.getCardData().getExpiryDate()
+            );
+        }
+    }
+}
+🛠 Step 8: Configure Spring Batch Step
+java
+Copy
+Edit
+@Bean
+public Step processAccountsStep(StepBuilderFactory stepBuilderFactory, 
+                                ItemReader<Account> reader, 
+                                ItemProcessor<Account, ConsolidatedResponse> processor, 
+                                ItemWriter<ConsolidatedResponse> writer) {
+    return stepBuilderFactory.get("processAccounts")
+            .<Account, ConsolidatedResponse>chunk(500)
+            .reader(reader)
+            .processor(processor)
+            .writer(writer)
+            .faultTolerant()
+            .skip(Exception.class) // Skip failures
+            .skipLimit(1000) // Maximum 1000 skipped records
+            .taskExecutor(new SimpleAsyncTaskExecutor())
+            .throttleLimit(10)
+            .build();
+}
+🛠 Step 9: Schedule Job to Run in Loop
+java
+Copy
+Edit
+@Scheduled(fixedDelay = 600000) // Run every 10 minutes
+public void runJob() throws Exception {
+    JobParameters jobParameters = new JobParametersBuilder()
+            .addLong("time", System.currentTimeMillis()) 
+            .toJobParameters();
+    
+    jobLauncher.run(processAccountsJob, jobParameters);
+}
+🚀 Conclusion
+✔ Handles 1M records efficiently
+✔ Parallel processing for fast API calls
+✔ Skips failed records & continues execution
+✔ Uses UPSERT to avoid duplicate entries
+
+Would you like a GitHub repo with a full working example? 🚀
