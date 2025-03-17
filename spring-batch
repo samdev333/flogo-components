@@ -231,3 +231,65 @@ public void runJob() throws Exception {
 ✔ Uses UPSERT to avoid duplicate entries
 
 Would you like a GitHub repo with a full working example? 🚀
+
+*******************
+SELECT 
+    'credit_card_account_details_by_account_id' AS table_name, 
+    COUNT(*) AS null_or_empty_count
+FROM credit_card_account_details_by_account_id
+WHERE 
+    account_id IS NULL OR account_id = '' OR 
+    account_status IS NULL OR account_status = '' OR 
+    product_brand_name IS NULL OR product_brand_name = '' OR 
+    customer_service_phone_number IS NULL OR customer_service_phone_number = '' OR 
+    tech_support_phone_number IS NULL OR tech_support_phone_number = ''
+
+UNION ALL
+
+SELECT 
+    'credit_card_customer_details_by_customer_id' AS table_name, 
+    COUNT(*) AS null_or_empty_count
+FROM credit_card_customer_details_by_customer_id
+WHERE 
+    customer_id IS NULL OR customer_id = ''
+
+UNION ALL
+
+SELECT 
+    'credit_card_details_by_card_id' AS table_name, 
+    COUNT(*) AS null_or_empty_count
+FROM credit_card_details_by_card_id
+WHERE 
+    card_id IS NULL OR card_id = ''
+
+UNION ALL
+
+SELECT 
+    'credit_card_account_customer_relations' AS table_name, 
+    COUNT(*) AS null_or_empty_count
+FROM credit_card_account_customer_relations
+WHERE 
+    account_id IS NULL OR account_id = '' OR 
+    customer_id IS NULL OR customer_id = '' OR 
+    external_customer_id IS NULL OR external_customer_id = ''
+
+UNION ALL
+
+SELECT 
+    'credit_card_customer_card_relations' AS table_name, 
+    COUNT(*) AS null_or_empty_count
+FROM credit_card_customer_card_relations
+WHERE 
+    customer_id IS NULL OR customer_id = '' OR 
+    card_id IS NULL OR card_id = ''
+
+UNION ALL
+
+SELECT 
+    'credit_card_company_account_relations' AS table_name, 
+    COUNT(*) AS null_or_empty_count
+FROM credit_card_company_account_relations
+WHERE 
+    company_id IS NULL OR company_id = '' OR 
+    account_id IS NULL OR account_id = '';
+**************************
