@@ -1,0 +1,668 @@
+Awesome—let’s build a bank-friendly, on-premises microservice that:
+	•	Crawls on-prem Confluence (pages + attachments),
+	•	Cleans/transforms content (optional LLM summaries via Spring AI with a local model),
+	•	Publishes HTML + files into SharePoint (Online or Server*),
+	•	Runs entirely on your on-prem Kubernetes, no Azure runtime services (we’ll only call Microsoft 365 Graph if you choose SharePoint Online).
+
+* If you use SharePoint Server (on-prem) instead of M365, see the “SharePoint Server (on-prem) path” note near the end.
+
+⸻
+
+1) What you’ll deploy (high level)
+	•	crawler (Spring Boot): pulls Confluence pages via REST, lists attachments.
+	•	transformer: converts Confluence Storage XHTML → clean HTML; rewrites embedded image/attachment links; (optional) generates short summary via Spring AI using a local LLM (e.g., Ollama/llama3).
+	•	publisher: uploads HTML + attachments to SharePoint (Files model in a document library), sets metadata (ConfluenceId, Version, SpaceKey, Labels…).
+	•	state: lightweight checkpoint store (SQLite file on a PVC).
+	•	scheduler: periodic sync (every 30–60 min) or a CronJob.
+	•	observability: Spring Boot actuator (health, metrics, logs).
+
+Everything runs behind your firewall in your cluster.
+
+⸻
+
+2) Prereqs you (or IT) should have ready
+	•	Confluence (on-prem): a read-only service account + API token (or SSO) and REST enabled.
+	•	SharePoint target:
+	•	Option A – SharePoint Online (M365): a site and library (e.g., ConfluenceSync). You’ll need an Entra ID app registration with client credentials and Sites.Selected permission granted to just that site.
+	•	Option B – SharePoint Server (on-prem): a site + document library and either NTLM/Kerberos or the App-Only Add-in model enabled.
+	•	On-prem Kubernetes: internal Docker registry, ability to create Secrets, PVCs, CronJobs.
+
+⸻
+
+3) Pick a publish model (recommended)
+
+Files model (recommended): upload page.html (and .txt summary) + attachments to a doc library. Simple, fast, works great with Copilot indexing SharePoint.
+Structure:
+
+/ConfluenceSync/{SpaceKey}/{PageId}-{slug}/page.html
+/ConfluenceSync/{SpaceKey}/{PageId}-{slug}/page.txt
+/ConfluenceSync/{SpaceKey}/{PageId}-{slug}/attachments/{filename}
+
+
+⸻
+
+4) Project skeleton (Maven)
+
+pom.xml (key deps)
+
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>bank.archipal</groupId>
+  <artifactId>confluence-sp-sync</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <java.version>21</java.version>
+    <spring.boot.version>3.3.2</spring.boot.version>
+    <spring.ai.version>1.0.0-M3</spring.ai.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring.boot.version}</version>
+        <type>pom</type><scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.springframework.ai</groupId>
+        <artifactId>spring-ai-bom</artifactId>
+        <version>${spring.ai.version}</version>
+        <type>pom</type><scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- Web + reactive HTTP -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webflux</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
+
+    <!-- Actuator -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
+
+    <!-- Spring AI (local model via Ollama, no cloud) -->
+    <dependency><groupId>org.springframework.ai</groupId><artifactId>spring-ai-ollama-spring-boot-starter</artifactId></dependency>
+
+    <!-- HTML/XML parsing -->
+    <dependency><groupId>org.jsoup</groupId><artifactId>jsoup</artifactId><version>1.17.2</version></dependency>
+
+    <!-- JSON -->
+    <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId></dependency>
+
+    <!-- SQLite for lightweight checkpointing -->
+    <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId><version>3.45.3.0</version></dependency>
+
+    <!-- Logging -->
+    <dependency><groupId>ch.qos.logback</groupId><artifactId>logback-classic</artifactId></dependency>
+
+    <!-- (If SharePoint Server on-prem w/ NTLM) add Apache HttpClient + JCIFS-ng -->
+    <!-- <dependency>...httpclient5-win...</dependency> -->
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+
+
+⸻
+
+5) Config (application.yml)
+
+server:
+  port: 8080
+management.endpoints.web.exposure.include: health,info,metrics,prometheus
+
+sync:
+  spaces: ["PAY", "RISK", "ARCH"]   # Confluence space keys
+  intervalSeconds: 1800             # 30 minutes
+  skipRestricted: true
+
+confluence:
+  baseUrl: "https://confluence.internal/rest/api"
+  webBase: "https://confluence.internal"   # for /download/attachments
+  username: "${CONF_USER}"
+  token: "${CONF_TOKEN}"
+
+sharepoint:
+  mode: "online"    # "online" or "server"
+  siteId: "${SP_SITE_ID}"         # Online: Graph siteId (e.g., tenant.sharepoint.com,site GUID)
+  driveId: "${SP_DRIVE_ID}"       # Library driveId
+  baseLibraryPath: "ConfluenceSync"
+  # ---- Online (Graph) auth ----
+  tenantId: "${GRAPH_TENANT_ID}"
+  clientId: "${GRAPH_CLIENT_ID}"
+  clientSecret: "${GRAPH_CLIENT_SECRET}"
+  # ---- Server (on-prem) alternative ----
+  server:
+    siteUrl: "https://sp.internal/sites/archipal"
+    library: "ConfluenceSync"     # doc library name
+
+ollama:
+  base-url: "http://ollama.archipal.svc:11434"
+  model: "llama3"                 # any local model you host
+
+Secrets (CONF_USER, CONF_TOKEN, GRAPH_*…) will come from Kubernetes Secrets.
+
+⸻
+
+6) Core code snippets
+
+6.1 Confluence client (WebClient)
+
+@Configuration
+class ConfluenceConfig {
+  @Bean
+  WebClient confluenceWebClient(@Value("${confluence.baseUrl}") String base,
+                                @Value("${confluence.username}") String user,
+                                @Value("${confluence.token}") String token) {
+    String basic = Base64.getEncoder().encodeToString((user + ":" + token).getBytes(StandardCharsets.UTF_8));
+    return WebClient.builder()
+      .baseUrl(base)
+      .defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + basic)
+      .build();
+  }
+}
+
+@Service
+class ConfluenceClient {
+  private final WebClient api;
+  @Value("${confluence.webBase}") String webBase;
+
+  ConfluenceClient(WebClient confluenceWebClient) { this.api = confluenceWebClient; }
+
+  Mono<JsonNode> getPage(String id) {
+    return api.get().uri(uri -> uri.path("/content/{id}")
+        .queryParam("expand","version,history,metadata.labels,ancestors,body.storage")
+        .build(id))
+      .retrieve().bodyToMono(JsonNode.class);
+  }
+
+  Mono<JsonNode> listUpdatedSince(String spaceKey, Instant since, int start, int limit) {
+    String cql = "type=page and space=" + spaceKey + " and lastmodified > " + since.toString();
+    return api.get().uri(uri -> uri.path("/content/search")
+        .queryParam("cql", cql)
+        .queryParam("expand","version,history,body.storage,metadata.labels,ancestors")
+        .queryParam("limit", limit).queryParam("start", start)
+        .build())
+      .retrieve().bodyToMono(JsonNode.class);
+  }
+
+  Mono<JsonNode> listAttachments(String pageId) {
+    return api.get().uri(uri -> uri.path("/content/{id}/child/attachment")
+        .queryParam("expand","version,metadata").build(pageId))
+      .retrieve().bodyToMono(JsonNode.class);
+  }
+
+  Mono<byte[]> downloadAttachment(String pageId, String filename) {
+    // use webBase for /download/attachments
+    String url = String.format("%s/download/attachments/%s/%s", webBase, pageId, UriUtils.encodePath(filename, StandardCharsets.UTF_8));
+    return WebClient.create().get().uri(url)
+      .header(HttpHeaders.AUTHORIZATION, api.mutate().build().defaultHeaders().getFirst(HttpHeaders.AUTHORIZATION))
+      .retrieve().bodyToMono(byte[].class);
+  }
+}
+
+6.2 Microsoft Graph token (client credentials) — no Azure SDK
+
+@Service
+class GraphTokenService {
+  private final WebClient web = WebClient.builder().build();
+  private final String tokenUrl; // https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token
+  private final String clientId, clientSecret;
+
+  GraphTokenService(@Value("${sharepoint.tenantId}") String tenant,
+                    @Value("${sharepoint.clientId}") String clientId,
+                    @Value("${sharepoint.clientSecret}") String clientSecret) {
+    this.clientId = clientId; this.clientSecret = clientSecret;
+    this.tokenUrl = "https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/token";
+  }
+
+  Mono<String> getAccessToken() {
+    return web.post().uri(tokenUrl)
+      .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+      .bodyValue("grant_type=client_credentials&client_id=" + clientId +
+                 "&client_secret=" + UriUtils.encode(clientSecret, StandardCharsets.UTF_8) +
+                 "&scope=" + UriUtils.encode("https://graph.microsoft.com/.default", StandardCharsets.UTF_8))
+      .retrieve().bodyToMono(JsonNode.class)
+      .map(j -> j.get("access_token").asText());
+  }
+}
+
+6.3 SharePoint Online publisher (Graph)
+
+@Service
+class SharePointPublisher {
+  private final WebClient graph = WebClient.builder()
+      .baseUrl("https://graph.microsoft.com/v1.0")
+      .build();
+  private final GraphTokenService tokens;
+  @Value("${sharepoint.siteId}") String siteId;
+  @Value("${sharepoint.driveId}") String driveId;
+  @Value("${sharepoint.baseLibraryPath}") String basePath;
+
+  SharePointPublisher(GraphTokenService tokens) { this.tokens = tokens; }
+
+  Mono<Void> uploadFile(String pathUnderLibrary, byte[] content) {
+    return tokens.getAccessToken().flatMap(tok ->
+      graph.put()
+        .uri(uri -> uri.path("/sites/{siteId}/drives/{driveId}/root:/{path}:/content")
+            .build(siteId, driveId, pathUnderLibrary))
+        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tok)
+        .contentType(MediaType.APPLICATION_OCTET_STREAM)
+        .bodyValue(content)
+        .retrieve().toBodilessEntity().then()
+    );
+  }
+
+  Mono<JsonNode> getItemByPath(String pathUnderLibrary) {
+    return tokens.getAccessToken().flatMap(tok ->
+      graph.get()
+        .uri(uri -> uri.path("/sites/{siteId}/drives/{driveId}/root:/{path}")
+            .build(siteId, driveId, pathUnderLibrary))
+        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tok)
+        .retrieve().bodyToMono(JsonNode.class)
+    );
+  }
+
+  Mono<Void> patchMetadata(String listItemId, Map<String,Object> fields) {
+    return tokens.getAccessToken().flatMap(tok ->
+      graph.patch()
+        .uri("/sites/{siteId}/lists/{listId}/items/{itemId}/fields",
+             siteId, getListIdFromDriveId(driveId), listItemId) // implement mapping
+        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tok)
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(fields)
+        .retrieve().toBodilessEntity().then()
+    );
+  }
+
+  // Helper: get listId for the drive (cache it); you can fetch once at startup.
+  private String getListIdFromDriveId(String driveId) { /* ...lookup & cache... */ return "LIST_ID"; }
+}
+
+6.4 HTML transform + image rewrite (Jsoup)
+
+@Component
+class ConfluenceHtmlTransformer {
+  String transformAndRewrite(JsonNode page, Function<String, String> attachmentUrlResolver) {
+    String storageHtml = page.path("body").path("storage").path("value").asText("");
+    Document doc = Jsoup.parse(storageHtml, "", Parser.xmlParser());
+
+    for (Element acImg : doc.select("ac|image")) {
+      Element riAttach = acImg.selectFirst("ri|attachment");
+      Element riUrl = acImg.selectFirst("ri|url");
+      String newSrc = null;
+      if (riAttach != null) {
+        String filename = riAttach.attr("ri:filename");
+        newSrc = attachmentUrlResolver.apply(filename);
+      } else if (riUrl != null) {
+        String value = riUrl.attr("ri:value");
+        String filename = value.substring(value.lastIndexOf('/') + 1);
+        newSrc = attachmentUrlResolver.apply(filename);
+      }
+      Element img = new Element(Tag.valueOf("img"), "");
+      if (newSrc != null) img.attr("src", newSrc);
+      acImg.replaceWith(img);
+    }
+
+    // Clean unwanted tags (macros/scripts/styles)
+    Whitelist safelist = Whitelist.relaxed(); // or build stricter
+    String cleaned = Jsoup.clean(doc.outerHtml(), safelist);
+    return cleaned;
+  }
+}
+
+6.5 Optional: Spring AI summary via a local model (Ollama)
+
+@Service
+class Summarizer {
+  private final ChatClient chat; // from Spring AI Ollama starter
+
+  Summarizer(ChatClient chat) { this.chat = chat; }
+
+  String summarize(String title, String cleanedHtml) {
+    String prompt = """
+      Summarize the following Confluence page for an enterprise knowledge index.
+      Output 3-5 bullet points, max 500 chars total, plain text.
+      Title: %s
+      Content:
+      %s
+      """.formatted(title, Jsoup.parse(cleanedHtml).text());
+
+    return chat.call(prompt).getResult().getOutput().getContent();
+  }
+}
+
+6.6 Sync service (incremental)
+
+@Service
+class SyncService {
+  private final ConfluenceClient conf;
+  private final SharePointPublisher sp;
+  private final ConfluenceHtmlTransformer xform;
+  private final Summarizer summarizer;
+  private final CheckpointStore cp; // SQLite-backed
+
+  SyncService(ConfluenceClient conf, SharePointPublisher sp,
+              ConfluenceHtmlTransformer xform, Summarizer summarizer, CheckpointStore cp) {
+    this.conf = conf; this.sp = sp; this.xform = xform; this.summarizer = summarizer; this.cp = cp;
+  }
+
+  @Scheduled(fixedDelayString = "${sync.intervalSeconds:1800}000")
+  public void runIncremental() {
+    // For each space → page updated since last checkpoint
+    for (String space : List.of("PAY","RISK","ARCH")) {
+      Instant since = cp.getSince(space);
+      int start = 0, limit = 100;
+      while (true) {
+        JsonNode res = conf.listUpdatedSince(space, since, start, limit).block();
+        List<JsonNode> pages = StreamSupport.stream(res.path("results").spliterator(), false).toList();
+        if (pages.isEmpty()) break;
+
+        for (JsonNode p : pages) processPage(p);
+
+        start += pages.size();
+      }
+      cp.update(space, Instant.now()); // conservative
+    }
+  }
+
+  void processPage(JsonNode page) {
+    String pageId = page.path("id").asText();
+    String title  = page.path("title").asText();
+    int version   = page.path("version").path("number").asInt(1);
+    String slug   = title.toLowerCase().replaceAll("[^a-z0-9]+","-");
+
+    // 1) attachments → upload to SP
+    JsonNode atts = conf.listAttachments(pageId).block();
+    Map<String,String> spAttachmentUrls = new HashMap<>();
+    for (JsonNode a : atts.path("results")) {
+      String fname = a.path("title").asText();
+      byte[] bytes = conf.downloadAttachment(pageId, fname).block();
+      String path = "ConfluenceSync/%s/%s-%s/attachments/%s".formatted(
+          page.path("space").path("key").asText("SPACE"), pageId, slug, fname);
+      sp.uploadFile(path, bytes).block();
+      spAttachmentUrls.put(fname, "/" + path); // we’ll resolve to absolute later
+    }
+
+    // 2) rewrite HTML
+    String html = xform.transformAndRewrite(page, fname -> {
+      String path = "ConfluenceSync/%s/%s-%s/attachments/%s".formatted(
+        page.path("space").path("key").asText("SPACE"), pageId, slug, fname);
+      // Graph exposes a webUrl for driveItems; for simplicity, we’ll use relative and let SP resolve.
+      return "/%s".formatted(path);
+    });
+
+    // 3) optional summary via local LLM
+    String summary = summarizer.summarize(title, html);
+
+    // 4) upload page.html + summary page.txt
+    String baseDir = "ConfluenceSync/%s/%s-%s".formatted(page.path("space").path("key").asText("SPACE"), pageId, slug);
+    sp.uploadFile(baseDir + "/page.html", html.getBytes(StandardCharsets.UTF_8)).block();
+    sp.uploadFile(baseDir + "/page.txt", summary.getBytes(StandardCharsets.UTF_8)).block();
+
+    // (optional) PATCH metadata on list item (ConfluenceId, Version, Labels…)
+    // Retrieve itemId via getItemByPath(baseDir + "/page.html") then patch fields
+  }
+}
+
+6.7 SQLite checkpoint (very small)
+
+@Repository
+class CheckpointStore {
+  private final Path db = Paths.get("/data/checkpoints.sqlite");
+
+  public CheckpointStore() {
+    try (var c = DriverManager.getConnection("jdbc:sqlite:" + db);
+         var st = c.createStatement()) {
+      st.executeUpdate("""
+        CREATE TABLE IF NOT EXISTS checkpoints(
+          space TEXT PRIMARY KEY,
+          since TEXT NOT NULL
+        )""");
+    } catch (SQLException e) { throw new RuntimeException(e); }
+  }
+
+  Instant getSince(String space) {
+    try (var c = DriverManager.getConnection("jdbc:sqlite:" + db);
+         var ps = c.prepareStatement("SELECT since FROM checkpoints WHERE space=?")) {
+      ps.setString(1, space);
+      try (var rs = ps.executeQuery()) {
+        if (rs.next()) return Instant.parse(rs.getString(1));
+      }
+    } catch (Exception ignored) {}
+    return Instant.EPOCH;
+  }
+
+  void update(String space, Instant since) {
+    try (var c = DriverManager.getConnection("jdbc:sqlite:" + db);
+         var ps = c.prepareStatement("""
+           INSERT INTO checkpoints(space,since) VALUES(?,?)
+           ON CONFLICT(space) DO UPDATE SET since=excluded.since
+         """)) {
+      ps.setString(1, space); ps.setString(2, since.toString()); ps.executeUpdate();
+    } catch (SQLException e) { throw new RuntimeException(e); }
+  }
+}
+
+
+⸻
+
+7) Containerize
+
+Dockerfile
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY target/confluence-sp-sync-1.0.0.jar app.jar
+# run as non-root
+RUN useradd -u 10001 appuser && mkdir -p /data && chown -R appuser /data
+USER appuser
+VOLUME ["/data"]
+EXPOSE 8080
+ENTRYPOINT ["java","-Dfile.encoding=UTF-8","-jar","/app/app.jar"]
+
+Build/push:
+
+mvn -q -DskipTests package
+docker build -t registry.internal/archipal/confluence-sp-sync:1.0.0 .
+docker push registry.internal/archipal/confluence-sp-sync:1.0.0
+
+
+⸻
+
+8) Kubernetes manifests (apply as needed)
+
+Namespace & PVC
+
+apiVersion: v1
+kind: Namespace
+metadata: { name: archipal }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: sync-state, namespace: archipal }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: 2Gi } }
+
+Secrets
+
+apiVersion: v1
+kind: Secret
+metadata: { name: sync-secrets, namespace: archipal }
+type: Opaque
+stringData:
+  CONF_USER: "svc_confluence_ro"
+  CONF_TOKEN: "<confluence-api-token>"
+  GRAPH_TENANT_ID: "<tenant-guid>"
+  GRAPH_CLIENT_ID: "<app-client-id>"
+  GRAPH_CLIENT_SECRET: "<client-secret>"
+  SP_SITE_ID: "<site-id-guid-or-composite>"
+  SP_DRIVE_ID: "<drive-id-guid>"
+
+ConfigMap
+
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: sync-config, namespace: archipal }
+data:
+  APPLICATION_YML: |
+    sync:
+      spaces: ["PAY","RISK","ARCH"]
+      intervalSeconds: 3600
+      skipRestricted: true
+    confluence:
+      baseUrl: "https://confluence.internal/rest/api"
+      webBase: "https://confluence.internal"
+      username: "${CONF_USER}"
+      token: "${CONF_TOKEN}"
+    sharepoint:
+      mode: "online"
+      siteId: "${SP_SITE_ID}"
+      driveId: "${SP_DRIVE_ID}"
+      baseLibraryPath: "ConfluenceSync"
+      tenantId: "${GRAPH_TENANT_ID}"
+      clientId: "${GRAPH_CLIENT_ID}"
+      clientSecret: "${GRAPH_CLIENT_SECRET}"
+    ollama:
+      base-url: "http://ollama.archipal.svc:11434"
+      model: "llama3"
+
+Deployment (long-running service with internal scheduler)
+
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: confluence-sp-sync, namespace: archipal }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: confluence-sp-sync } }
+  template:
+    metadata: { labels: { app: confluence-sp-sync } }
+    spec:
+      containers:
+      - name: app
+        image: registry.internal/archipal/confluence-sp-sync:1.0.0
+        ports: [{ containerPort: 8080 }]
+        envFrom:
+          - secretRef: { name: sync-secrets }
+        volumeMounts:
+          - { name: state, mountPath: /data }
+          - { name: cfg, mountPath: /config }
+        env:
+          - name: SPRING_CONFIG_IMPORT
+            value: "optional:file:/config/application.yml"
+        resources:
+          requests: { cpu: "100m", memory: "256Mi" }
+          limits:   { cpu: "500m", memory: "512Mi" }
+      volumes:
+        - name: state
+          persistentVolumeClaim: { claimName: sync-state }
+        - name: cfg
+          configMap:
+            name: sync-config
+            items: [{ key: APPLICATION_YML, path: application.yml }]
+
+Prefer 1 replica for job-like behavior. If you scale out, add a distributed lock to avoid double-publishing.
+
+(Optional) CronJob instead of @Scheduled
+
+apiVersion: batch/v1
+kind: CronJob
+metadata: { name: confluence-sp-sync, namespace: archipal }
+spec:
+  schedule: "0 * * * *"  # hourly
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: app
+            image: registry.internal/archipal/confluence-sp-sync:1.0.0
+            envFrom: [{ secretRef: { name: sync-secrets } }]
+            volumeMounts:
+              - { name: state, mountPath: /data }
+              - { name: cfg, mountPath: /config }
+            env:
+              - name: SPRING_CONFIG_IMPORT
+                value: "optional:file:/config/application.yml"
+          volumes:
+            - name: state
+              persistentVolumeClaim: { claimName: sync-state }
+            - name: cfg
+              configMap:
+                name: sync-config
+                items: [{ key: APPLICATION_YML, path: application.yml }]
+
+NetworkPolicy (egress allow)
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-egress-conf-sp, namespace: archipal }
+spec:
+  podSelector: { matchLabels: { app: confluence-sp-sync } }
+  policyTypes: ["Egress"]
+  egress:
+    - to: # Confluence internal CIDR(s)
+      - ipBlock: { cidr: "10.20.0.0/16" }
+      ports: [{ protocol: TCP, port: 443 }]
+    - to: # Microsoft Graph public IP ranges (or allow all 443 if egress filter is simpler)
+      - ipBlock: { cidr: "0.0.0.0/0" }
+      ports: [{ protocol: TCP, port: 443 }]
+
+If your CNI supports FQDN policies (e.g., Cilium), lock to confluence.internal and graph.microsoft.com.
+
+⸻
+
+9) Run order & backfill
+	1.	Smoke test locally (env vars set) → run SyncService.processPage() on one page.
+	2.	Deploy Deployment (or CronJob) and watch logs.
+	3.	Backfill per space: temporarily set since = 1970-01-01 in the checkpoint for a one-time full sync.
+	4.	Let incremental keep up (version checks prevent churn).
+
+⸻
+
+10) Content quality tips
+	•	Save both page.html (fidelity) and page.txt (summary/plain text) for better search.
+	•	For diagrams:
+	•	PlantUML: run a tiny PlantUML server in-cluster; render .puml to PNG/SVG during sync.
+	•	Mermaid: use mmdc CLI in a sidecar/job to render.
+	•	draw.io/Gliffy: store source and the rendered PNG/SVG; rewrite <img src> to the SP URLs.
+	•	Restricted pages: either skip or publish a stub (title + note), as per governance.
+
+⸻
+
+11) Security & governance (bank-grade)
+	•	Least privilege everywhere: Confluence RO service account scoped to allowed spaces; SharePoint app with Sites.Selected to the single site/library.
+	•	PII/PCI filtering: add a sanitizer step—regex/DFL—drop/redact before publish.
+	•	Audit: log (pageId, version, who/when); keep a DLQ folder for failed pages.
+	•	Throttling: handle HTTP 429 from Graph and Confluence; exponential backoff + jitter.
+	•	Secrets: only in K8s Secrets; rotate regularly; restrict RBAC.
+	•	HA: keep the PVC; run leader election if >1 replica.
+
+⸻
+
+SharePoint Server (on-prem) path (if you do not want M365/Graph)
+	•	Use REST (/_api/web/GetFolderByServerRelativeUrl('...')/Files/add(url='...',overwrite=true)) or CSOM.
+	•	Auth: NTLM/Kerberos (Java: Apache HttpClient with SPNEGO) or App-Only Add-in (requires the legacy App Management Service).
+	•	Replace the Graph publisher with a SharePoint Server publisher calling your on-prem URL and passing cookies/Negotiate headers.
+	•	Everything else (crawler, transform, scheduling) remains the same.
+
+⸻
+
+Done ✅
+
+You now have a fully on-prem, Kubernetes-native pipeline that syncs Confluence → SharePoint, with optional local LLM summarization via Spring AI—no Azure runtime services required.
+
+If you want, I can:
+	•	Generate a starter repo (folders, classes, Dockerfile, K8s manifests),
+	•	Add a PlantUML sidecar and an Ollama deployment manifest,
+	•	Or adapt the publisher for SharePoint Server (on-prem) with NTLM.
