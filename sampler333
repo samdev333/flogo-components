@@ -1,0 +1,425 @@
+awesome — here’s a **complete, minimal VS Code extension** you can paste into a repo to get an **“MCP: Sign In”** experience using **Auth Code + PKCE**, a **loopback** redirect, **OBO** to your `api://mcp-edge` resource, **DPoP** key/headers, and a sample **“MCP: Test Call”** command.
+
+It’s intentionally small but production-shaped:
+
+* no client secret in the IDE (public client),
+* refresh token stored in VS Code SecretStorage,
+* OBO before calling MCP Edge,
+* DPoP proof on every call.
+
+---
+
+# 1) `package.json`
+
+```json
+{
+  "name": "mcp-auth-sample",
+  "displayName": "MCP Auth Sample",
+  "description": "Sign in (Auth Code + PKCE), OBO, and DPoP for MCP Edge calls",
+  "version": "0.0.1",
+  "publisher": "your-publisher",
+  "engines": { "vscode": "^1.82.0" },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onCommand:mcp.signIn",
+    "onCommand:mcp.signOut",
+    "onCommand:mcp.testCall"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "mcp.signIn", "title": "MCP: Sign In" },
+      { "command": "mcp.signOut", "title": "MCP: Sign Out" },
+      { "command": "mcp.testCall", "title": "MCP: Test Call (tool.run)" }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "MCP Auth",
+      "properties": {
+        "mcpAuth.tenantId": { "type": "string", "default": "YOUR_TENANT_GUID", "description": "Entra tenant (GUID)" },
+        "mcpAuth.clientId": { "type": "string", "default": "YOUR_PUBLIC_CLIENT_ID", "description": "Public client app registration (IDE)" },
+        "mcpAuth.redirectUri": { "type": "string", "default": "http://127.0.0.1:53123/callback", "description": "Loopback redirect URI" },
+        "mcpAuth.scopes": {
+          "type": "array",
+          "default": [
+            "openid",
+            "profile",
+            "offline_access",
+            "api://mcp-edge/mcp.server.playwright",
+            "api://mcp-edge/tenant:spend-controls"
+          ],
+          "description": "Scopes requested at login"
+        },
+        "mcpAuth.mcpEdgeBaseUrl": {
+          "type": "string",
+          "default": "https://mcp.edge.internal",
+          "description": "Your MCP Edge base URL (Istio Ingress)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.33",
+    "@types/node-fetch": "^2.6.11",
+    "@types/vscode": "^1.82.0",
+    "typescript": "^5.4.0",
+    "vsce": "^2.15.0"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.11"
+  }
+}
+```
+
+> We use `node-fetch@2` (CommonJS friendly). We’ll dynamically import **`jose`** (ESM) in code to avoid module-type headaches.
+
+---
+
+# 2) `tsconfig.json`
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "outDir": "out",
+    "strict": true,
+    "sourceMap": true,
+    "esModuleInterop": true
+  },
+  "exclude": ["node_modules", ".vscode-test"]
+}
+```
+
+---
+
+# 3) `src/extension.ts`
+
+```ts
+import * as vscode from 'vscode';
+import { createServer, Server } from 'http';
+import * as crypto from 'crypto';
+import fetch from 'node-fetch';
+
+type Tokens = { access_token: string; refresh_token?: string; expires_in?: number; id_token?: string };
+
+// ---------- Helpers ----------
+function b64url(buf: Buffer) { return buf.toString('base64url'); }
+function nowSec() { return Math.floor(Date.now()/1000); }
+
+function pkce() {
+  const verifier = b64url(crypto.randomBytes(32));
+  const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
+  return { verifier, challenge };
+}
+
+function cfg<T=string>(key: string): T {
+  return vscode.workspace.getConfiguration().get<T>(key)!;
+}
+
+function authBase(tenantId: string) {
+  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0`;
+}
+
+async function readSecret(context: vscode.ExtensionContext, key: string) {
+  return await context.secrets.get(key);
+}
+async function writeSecret(context: vscode.ExtensionContext, key: string, val: string) {
+  await context.secrets.store(key, val);
+}
+async function delSecret(context: vscode.ExtensionContext, key: string) {
+  await context.secrets.delete(key);
+}
+
+// ---------- DPoP ----------
+async function getJose() {
+  // ESM-only lib; load via dynamic import to keep our extension CommonJS.
+  // @ts-ignore
+  return await import('jose');
+}
+
+async function getOrCreateDpopJwk(context: vscode.ExtensionContext) {
+  const existing = await readSecret(context, 'mcp.dpop');
+  if (existing) return JSON.parse(existing);
+  const jose = await getJose();
+  const { privateKey } = await jose.generateKeyPair('ES256');
+  const jwk = await jose.exportJWK(privateKey);
+  (jwk as any).alg = 'ES256';
+  await writeSecret(context, 'mcp.dpop', JSON.stringify(jwk));
+  return jwk;
+}
+
+async function makeDpop(jwk: any, method: string, url: string, at?: string) {
+  const jose = await getJose();
+  const privateKey = await jose.importJWK(jwk, 'ES256');
+  const claims: any = { htm: method.toUpperCase(), htu: url, iat: nowSec(), jti: crypto.randomUUID() };
+  if (at) {
+    const ath = crypto.createHash('sha256').update(at).digest('base64url');
+    claims.ath = ath;
+  }
+  return await new jose.SignJWT(claims)
+    .setProtectedHeader({ alg: 'ES256', typ: 'dpop+jwt' })
+    .sign(privateKey);
+}
+
+// ---------- OAuth (Auth Code + PKCE) ----------
+async function openSystemBrowserAuthorize(tenantId: string, clientId: string, redirectUri: string, scopes: string, codeChallenge: string) {
+  const url = new URL(`${authBase(tenantId)}/authorize`);
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('scope', scopes);
+  url.searchParams.set('code_challenge', codeChallenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  await vscode.env.openExternal(vscode.Uri.parse(url.toString()));
+}
+
+async function exchangeAuthCodeForTokens(tenantId: string, clientId: string, redirectUri: string, code: string, codeVerifier: string): Promise<Tokens> {
+  const tokenUrl = `${authBase(tenantId)}/token`;
+  const form = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: clientId,
+    code,
+    redirect_uri: redirectUri,
+    code_verifier: codeVerifier
+  });
+  const res = await fetch(tokenUrl, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form as any });
+  if (!res.ok) throw new Error(`Auth code exchange failed: ${res.status} ${await res.text()}`);
+  return await res.json() as Tokens;
+}
+
+async function refreshUserTokens(tenantId: string, clientId: string, refresh_token: string): Promise<Tokens> {
+  const tokenUrl = `${authBase(tenantId)}/token`;
+  const form = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: clientId,
+    refresh_token
+  });
+  const res = await fetch(tokenUrl, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form as any });
+  if (!res.ok) throw new Error(`Refresh failed: ${res.status} ${await res.text()}`);
+  return await res.json() as Tokens;
+}
+
+// ---------- OBO (user → resource token for MCP Edge) ----------
+async function oboToMcpEdge(tenantId: string, clientId: string, userAccessToken: string, explicitScopes?: string): Promise<string> {
+  // Entra OBO
+  const tokenUrl = `${authBase(tenantId)}/token`;
+  const form = new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    requested_token_use: 'on_behalf_of',
+    client_id: clientId,
+    assertion: userAccessToken
+  });
+  if (explicitScopes && explicitScopes.trim().length) {
+    form.set('scope', explicitScopes);
+  } else {
+    form.set('scope', 'api://mcp-edge/.default');
+  }
+  const res = await fetch(tokenUrl, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form as any });
+  if (!res.ok) throw new Error(`OBO failed: ${res.status} ${await res.text()}`);
+  const json = await res.json() as Tokens;
+  return json.access_token;
+}
+
+// ---------- Loopback receiver for ?code= ----------
+async function waitForAuthCode(redirectUri: string): Promise<string> {
+  const url = new URL(redirectUri);
+  const port = Number(url.port || '53123');
+
+  return await new Promise<string>((resolve, reject) => {
+    let server: Server | undefined;
+    const listener = (req: any, res: any) => {
+      const u = new URL(req.url || '', redirectUri);
+      const code = u.searchParams.get('code');
+      if (code) {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end('Login complete. You can close this tab.');
+        setTimeout(() => { try { server?.close(); } catch { } }, 10);
+        resolve(code);
+      } else {
+        res.statusCode = 400;
+        res.end('Missing code');
+      }
+    };
+    server = createServer(listener).listen(port, '127.0.0.1').on('error', reject);
+  });
+}
+
+// ---------- Public API used by commands ----------
+async function ensureUserAccessToken(context: vscode.ExtensionContext): Promise<string> {
+  const tenantId = cfg('mcpAuth.tenantId');
+  const clientId = cfg('mcpAuth.clientId');
+  const redirectUri = cfg('mcpAuth.redirectUri');
+  const scopes = (cfg<string[]>('mcpAuth.scopes') || []).join(' ');
+
+  // Try refresh first
+  const rt = await readSecret(context, 'mcp.refresh');
+  if (rt) {
+    try {
+      const t = await refreshUserTokens(tenantId, clientId, rt);
+      if (t.refresh_token) await writeSecret(context, 'mcp.refresh', t.refresh_token);
+      return t.access_token;
+    } catch {
+      // fall through to full sign-in
+    }
+  }
+
+  const { verifier, challenge } = pkce();
+
+  // Start browser and loopback listener concurrently
+  const codePromise = waitForAuthCode(redirectUri);
+  await openSystemBrowserAuthorize(tenantId, clientId, redirectUri, scopes, challenge);
+  const code = await codePromise;
+
+  const tokens = await exchangeAuthCodeForTokens(tenantId, clientId, redirectUri, code, verifier);
+  if (tokens.refresh_token) await writeSecret(context, 'mcp.refresh', tokens.refresh_token);
+  return tokens.access_token;
+}
+
+async function getResourceTokenForMcp(context: vscode.ExtensionContext): Promise<string> {
+  const userAT = await ensureUserAccessToken(context);
+  const tenantId = cfg('mcpAuth.tenantId');
+  const clientId = cfg('mcpAuth.clientId');
+  // If you want explicit scopes instead of .default, derive from config:
+  const explicit = (cfg<string[]>('mcpAuth.scopes') || [])
+    .filter(s => s.startsWith('api://')) // keep API scopes only
+    .join(' ');
+  return await oboToMcpEdge(tenantId, clientId, userAT, explicit);
+}
+
+async function callMcpEdge(context: vscode.ExtensionContext, path: string, payload: any) {
+  const base = cfg('mcpAuth.mcpEdgeBaseUrl').replace(/\/+$/, '');
+  const url = `${base}${path}`;
+  const at = await getResourceTokenForMcp(context);
+  const jwk = await getOrCreateDpopJwk(context);
+  const dpop = await makeDpop(jwk, 'POST', url, at);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: `DPoP ${at}`,
+      dpop,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error(`MCP call failed: ${res.status} ${await res.text()}`);
+  return await res.json();
+}
+
+// ---------- Status bar ----------
+let statusBar: vscode.StatusBarItem;
+function setStatus(text: string, tooltip?: string) {
+  if (!statusBar) return;
+  statusBar.text = text;
+  statusBar.tooltip = tooltip;
+  statusBar.show();
+}
+
+// ---------- Extension entry ----------
+export function activate(context: vscode.ExtensionContext) {
+  statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+  statusBar.command = 'mcp.signIn';
+  setStatus('$(account) MCP: Sign in');
+
+  context.subscriptions.push(statusBar);
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mcp.signIn', async () => {
+      try {
+        vscode.window.setStatusBarMessage('Signing in to MCP…', 3000);
+        const at = await ensureUserAccessToken(context);
+        if (at) setStatus('$(verified) MCP: Signed in', 'Authenticated. Ready for OBO/DPoP.');
+        vscode.window.showInformationMessage('MCP sign-in complete.');
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Sign-in failed: ${e.message || e}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mcp.signOut', async () => {
+      await delSecret(context, 'mcp.refresh');
+      setStatus('$(account) MCP: Sign in', 'Signed out');
+      vscode.window.showInformationMessage('Signed out (refresh token cleared).');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mcp.testCall', async () => {
+      try {
+        const result = await callMcpEdge(context, '/mcp/playwright/rpc', {
+          jsonrpc: '2.0',
+          id: '1',
+          method: 'tool.run',
+          params: { tool: 'openPage', args: { url: 'https://example.com' } }
+        });
+        vscode.window.showInformationMessage(`MCP OK: ${JSON.stringify(result).slice(0, 120)}…`);
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`MCP call error: ${e.message || e}`);
+      }
+    })
+  );
+}
+
+export function deactivate() {}
+```
+
+---
+
+# 4) Install the last dependency
+
+We dynamically import **`jose`** for DPoP signing:
+
+```bash
+npm i jose@^5
+```
+
+> `jose` is ESM-only. We load it with `await import('jose')` so our extension can stay CommonJS.
+
+---
+
+# 5) How to run
+
+1. In **Entra**, register a **public client** with redirect `http://127.0.0.1:53123/callback`.
+   Grant API permissions to your **MCP Edge API** (`api://mcp-edge`) scopes.
+
+2. In VS Code:
+
+   * Set these in **Settings → Extensions → MCP Auth** (or edit `settings.json`):
+
+     * `mcpAuth.tenantId`: your tenant GUID
+     * `mcpAuth.clientId`: your IDE public client id
+     * `mcpAuth.redirectUri`: `http://127.0.0.1:53123/callback`
+     * `mcpAuth.scopes`: include `openid`, `profile`, `offline_access`, and your `api://mcp-edge/...` scopes
+     * `mcpAuth.mcpEdgeBaseUrl`: your Istio edge URL (e.g., `https://mcp.edge.internal`)
+
+3. Build & launch:
+
+```bash
+npm install
+npm run compile
+# press F5 in VS Code to launch the Extension Development Host
+```
+
+4. In the command palette:
+
+   * Run **“MCP: Sign In”** → system browser opens → complete SSO/MFA → IDE stores refresh token.
+   * Run **“MCP: Test Call”** → extension does **OBO** → **DPoP** → calls `POST {base}/mcp/playwright/rpc`.
+
+---
+
+## Notes & tweaks
+
+* **OBO scopes**: If your Entra OBO requires `.default`, keep it; otherwise pass explicit `api://mcp-edge/...` scopes like in the code.
+* **Multiple servers/tenants**: switch the payload path `/mcp/<serverId>/rpc` and include tenant headers in your edge if needed—OPA will enforce.
+* **Prod hardening**: add retry/backoff, clock-skew handling, show signed-in user (decode ID token), rotate DPoP key periodically, add telemetry.
+
+That’s it — you now have a **full “MCP: Sign In” flow** in VS Code that matches your enterprise constraints (Auth Code + PKCE, OBO, DPoP, one-way TLS).
