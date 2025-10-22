@@ -423,3 +423,51 @@ npm run compile
 * **Prod hardening**: add retry/backoff, clock-skew handling, show signed-in user (decode ID token), rotate DPoP key periodically, add telemetry.
 
 That’s it — you now have a **full “MCP: Sign In” flow** in VS Code that matches your enterprise constraints (Auth Code + PKCE, OBO, DPoP, one-way TLS).
+
+
+*****************
+Based on this hack tank suggest the best idea to submit. Al HackTank 2025
+Get ready to unlock the future of finance!
+This is your chance to reimagine what's possible by leveraging artificial intelligence (Al) to dramatically change the way we work and serve our customers.
+We want your BIG ideas! This hackathon will be supported by Al experts, technology teams, and a prototyping sandbox to truly see your visions come to life.
+During the last week of October (TechTober), innovators from all over the bank will participate in an action-packed hackathon.
+Select teams will design, prototype, and pitch Al-powered solutions that could transform how we work and serve our customers. These ideas may streamline operations, deliver new products or services, and possibly even shape the future of banking.
+KEY QUESTION:
+How might we leverage Al to truly innovate our ways of working and serving our customers?
+With access to cutting-edge tools, mentorship from experts, and the freedom to experiment, this is your opportunity to showcase bold ideas, push boundaries, and help write the next chapter of financial innovation.
+Top hackathon ideas will be selected to pitch in front of a Managing Committee-led group of judges. The winning idea will be considered for future funding and executive sponsorship for further development and implementation.
+To be considered for the upcoming Al Hackathon submit your ideas on this page by clicking the 'post idea' button above.
+KEY SUCCESS CRITERIA:
+Multiple entries are accepted, and all ideas are welcome, especially those that:
+﻿﻿Use Al in a new and novel way
+﻿﻿Have a financial impact of $2 Million or more
+﻿﻿Know what data sources are required to build a working solution
+TOP IDEAS:
+All hackathon teams will pitch their solutions on Friday, October 31 for a chance to be one of the select teams chosen to advance to the Shark Tank, where additional funding and support are up for grabs. More than one idea may be chosen to advance for further development with the Al COE and Enterprise Innovation Team.
+In case of questions, suggestions, or the need for accommodations to access our platform, please email us at.
+Submission Period
+September 3 to 12
+Al Hackathon
+October 27 to 31•
+You said:
+These are all very generic and very routine use cases. Think out of the box and try something no one ever tried before. Something totally unique and innovative 
+You said:
+Hmm still very payment related but nothing novice or customer impact like totally a game changer in the banking but not risk and legal bounded something like a small use case but no one touched it but a big impact. Or else a huge use case like account conversions to automate with significant cost cutting etc 
+You said:
+I was referring to account conversions for small business or retail cards from other bank to our bank etc 
+You said:
+Am I missing anything in this use case? Because I was told portfolio conversion is huge and very complex in nature and takes many months. So bringing at least 1 month down is a significant revenue increase. So just what to take I am not over simplifying the problem. Just don’t want people laughing at me 
+You said:
+Ok first answer these to submit the entry 
+You said:
+Yes 
+You said:
+Yes 
+You said:
+Create HackTank-ready pitch deck (5 slides)
+You said:
+Yes create the actual PPTX file with all the infographics and graphs and pictures 
+You said:
+Team is asking about data and solution. So how to build this? 
+
+*************
