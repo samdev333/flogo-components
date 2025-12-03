@@ -135,3 +135,153 @@ Database Queries: If needed, you can configure direct database access in Karate 
 Custom Match Rules: For fields that may vary slightly, you can use match contains or match each assertions for more flexible comparisons.
 Logging: Use Karate’s built-in logging to add more visibility into request and response payloads.
 This setup provides a complete framework for end-to-end test automation of your GraphQL APIs with data source comparisons and a detailed HTML report.
+
+**********
+# Story: Verify branding in Casper & General Correspondence for account without co-applicant
+
+## Acceptance Criteria
+
+- **AC1**: CSR can log into Casper successfully.
+- **AC2**: Account must **NOT** have a co-applicant.
+- **AC3**: Branding displays correctly for product description and partner.
+- **AC4**: Account Summary page loads after verification.
+- **AC5**: General Correspondence workflow displays and allows letter selection.
+- **AC6**: Confirmation status shows **"Resolved-Completed"** after submission.
+- **AC7**: Letters/forms in CMOD display correct branding and partner logo after batch.
+
+## Business Flow (Happy Path)
+
+**Actor:** CSR user  
+**System:** Casper (call center app), CMOD (letters repository)  
+**Environment URL:** `https://it-v8-prpccallcenter.us.bank-dns.com/prweb`  
+
+**Precondition:**
+
+- Test account **must NOT have a co-applicant**.
+- Example account (for test): `1234`.
+
+---
+
+### Scenario: Verify branding during interaction and correspondence (UI flow only)
+
+1. CSR navigates to jasper URL.
+2. CSR logs in with:
+   - Username: `user`
+   - Password: `pwd`
+3. Casper Dashboard displays.
+4. CSR starts an interaction:
+   - Clicks **Start Interaction**.
+   - Selects **Inbound Phone Call** from the dropdown.
+5. CSR searches for account:
+   - Expands **Advanced Search**.
+   - Selects **Unique ID** tab.
+   - Types/pastes `1234` in the **Unique ID** section.
+   - Clicks **Submit**.
+6. System loads the account and displays product details:
+   - Product description is visible.
+   - FI / Partner information is visible.
+7. CSR validates that **branding is correct** for product description and partner.
+8. CSR proceeds with verification:
+   - Selects **Contact: Applicant**.
+   - Clicks **Submit**.
+   - Selects 2–3 verification options.
+   - Clicks **Submit**.
+9. **Account Summary** page displays.
+
+### Scenario: Start General Correspondence for the account (UI flow)
+
+1. From Account Summary, CSR clicks **Add Task**.
+2. CSR selects **Request General Correspondence**.
+3. CSR clicks **Add Tasks**.
+4. **General Correspondence** workflow displays.
+5. CSR selects the following letters/forms:
+   - Account Status and Balance (Letter **20044**)
+   - AutoPay Form (Letter **20042**)
+   - Cardmember Agreement
+   - Legal Name Change (Letter **10003**)
+6. CSR clicks **Submit** to confirm the changes.
+7. Confirmation status **"Resolved-Completed"** displays.
+8. CSR clicks **Confirm**.
+9. CSR clicks **Wrap Up**.
+10. CSR clicks **Submit**.
+11. Wrap Up completes successfully.
+
+### Scenario (Batch / CMOD validation – usually manual or separate job)
+
+> This part is often not suitable for a single Playwright test run and may be validated by a later job or a separate check.
+
+1. After the next batch is processed,
+2. CSR validates letters in **CMOD**.
+3. Letters/forms display correct branding and partner logo where relevant.
+
+
+Planner prompt:
+“You are a Playwright Test Planner.
+
+Read the full story in stories/CASPER-Branding-No-Coapplicant.md and create a comprehensive test plan as Markdown.
+
+Requirements:
+
+Cover all Acceptance Criteria AC1–AC7.
+
+Create at least 3 separate test cases:
+
+Login + branding validation in Casper (no co-applicant)
+
+General Correspondence workflow and confirmation status
+
+(Optional / separate) a placeholder test for CMOD verification that can be implemented later or treated as manual.
+
+For each test, use this structure:
+
+## Test N: Title
+
+Preconditions
+
+Steps
+
+Expected results
+
+Do not skip any acceptance criteria. Return only the Markdown plan.”
+
+
+Generator prompt:
+“You are a Playwright Test Generator.
+
+Using plans/CASPER-Branding-No-Coapplicant.plan.md as the source of truth, generate Playwright TypeScript tests that implement all UI-automatable test cases (login, Casper branding, General Correspondence flow).
+
+Requirements:
+
+Create a single file: tests/CASPER-Branding-No-Coapplicant.spec.ts.
+
+Assume baseURL is set in playwright.config.ts to the Casper environment URL. Use relative paths where possible.
+
+Use robust locators (getByRole, getByLabel, getByPlaceholder, getByTestId) instead of fragile CSS/xpath.
+
+Use Playwright’s auto-wait expectations like await expect(locator).toBeVisible() instead of fixed timeouts.
+
+Treat the CMOD / batch verification as a separate test that can be marked test.skip with a comment that it is validated by a separate process.
+
+Save the final code to tests/CASPER-Branding-No-Coapplicant.spec.ts.”
+
+Healer prompt:
+“You are a Playwright Test Healer.
+
+The tests in tests/CASPER-Branding-No-Coapplicant.spec.ts are failing with these errors:
+
+<paste the short error log here>
+
+
+Please:
+
+Repair the locators or add appropriate waits using await expect(...).toBeVisible() / toHaveText, etc.
+
+Do not change the business intent or acceptance criteria.
+
+Avoid adding waitForTimeout except as a last resort.
+
+Keep tests split by scenario as defined in the plan.
+
+Update the test file in place.”
+
+
